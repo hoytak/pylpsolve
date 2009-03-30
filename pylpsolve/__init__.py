@@ -1,2 +1,2 @@
-from lpsolve import LPSolve, LPSolveException
+from pylpsolve import LPSolve, LPSolveException
 

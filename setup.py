@@ -7,7 +7,7 @@ debug_mode_c_code = False
 
 source_directory_list = ['pylpsolve']
 compiler_args = []
-link_args = []
+link_args = ['-static']
 version = "0.1"
 description="PyLPSolve: Object-oriented wrapper for the lp_solve 5.5 LP solver."
 author = "Hoyt Koepke"
@@ -34,12 +34,14 @@ classifiers = [
     'Programming Language :: C',
     ]
 
+numpy_needed = True
+
 
 # Stuff for extension module stuff
 extra_library_dirs = []
 extra_include_dirs = []
 
-library_includes = []
+library_includes = ['lpsolve55', 'colamd']
 specific_libraries = {}
 
 
@@ -54,6 +56,11 @@ import sys
 
 from distutils.core import setup
 from distutils.extension import Extension
+
+
+if numpy_needed:
+    import numpy
+    extra_include_dirs.append(numpy.get_include())
 
 ######################################################
 # First have to see if we're authorized to use cython files, or if we
@@ -135,7 +142,7 @@ if __name__ == '__main__':
                 if len(l.strip()) != 0]
 
     def get_libraries(m):
-        return (specific_libraries[m] if m in specific_libraries else [])
+        return library_includes + (specific_libraries[m] if m in specific_libraries else [])
     
     def get_extra_compile_args(m):
         return compiler_args + (['-g', '-O0'] if debug_mode_c_code else [])

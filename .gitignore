@@ -1,0 +1,6 @@
+core*
+gmon.out
+*~
+build/
+*.pyc
+.gitignore
