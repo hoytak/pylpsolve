@@ -1,7 +1,8 @@
-import numpy as np
 from numpy cimport ndarray as ar
-from numpy cimport float32_t, float64_t, int32_t, uint32_t, int64_t, uint64_t
-from numpy import empty, ones, zeros
+from numpy import empty, ones, zeros, uint, arange
+
+from constraintstruct cimport _Constraint, setupConstraint, \
+    setInLP, clearConstraint, isInUse
 
 import warnings
 
@@ -10,32 +11,19 @@ cimport cython
 ctypedef double real
 ctypedef unsigned char ecode
 
+import optionlookup
+
+######################################################################
+# A few early binding things
+
+cdef dict default_options = optionlookup._default_options
+cdef dict presolve_flags  = optionlookup._presolve_flags
+cdef dict pricer_lookup   = optionlookup._pricer_lookup
+cdef dict pricer_flags    = optionlookup._pricer_flags
+
+
 ######################################################################
 # LPSolve constants
-
-DEF constraint_leq   = 1
-DEF constraint_geq   = 2
-DEF constraint_equal = 3
-
-cdef list _constraint_type_list = [
-    ("<"      , constraint_leq),
-    ("<="     , constraint_leq),
-    ("=<"     , constraint_leq),
-    ("leq"    , constraint_leq),
-    ("lt"     , constraint_leq),
-    (">"      , constraint_geq),
-    (">="     , constraint_geq),
-    ("=>"     , constraint_geq),
-    ("geq"    , constraint_geq),
-    ("gt"     , constraint_geq),
-    ("="      , constraint_equal),
-    ("=="     , constraint_equal),
-    ("eq"     , constraint_equal),
-    ("equal"  , constraint_equal)]
-
-cdef dict _constraint_map = dict(_constraint_type_list)
-cdef str _valid_constraint_identifiers = \
-    ','.join(["'%s'" % cid for cid,ct in _constraint_type_list])
 
 cdef extern from "lpsolve/lp_lib.h":
     ctypedef void lprec
@@ -51,198 +39,313 @@ cdef extern from "lpsolve/lp_lib.h":
 
         ecode add_constraint(lprec*, real* row, int ctype, real rh)
         ecode add_constraintex(lprec*, int count, real* row, int *colno, int ctype, real rh)
-        
+
+        ecode set_rowex(lprec *lp, int row_no, int count, real *row, int *colno)
+        ecode set_constr_type(lprec *lp, int row, int con_type)
+        ecode set_rh(lprec *lp, int row, real value)
+        ecode set_rh_range(lprec *lp, int row, real deltavalue)
+
         ecode set_add_rowmode(lprec*, unsigned char turn_on)
         
         ecode set_lowbo(lprec*, int column, real value)
         ecode set_upbo(lprec*, int column, real value)
+        real get_lowbo(lprec*, int column)
+        real get_upbo(lprec*, int column)
+        real get_infinite(lprec*)
         ecode set_bounds(lprec*, int column, real lower, real upper)
         ecode set_unbounded(lprec *lp, int column)
 
         void set_presolve(lprec*, int do_presolve, int maxloops)
+
         int get_Ncolumns(lprec*)
 
         ecode get_variables(lprec*, real *var)
         real get_objective(lprec*)
+
+        void set_pivoting(lprec*, int rule)
 
         int solve(lprec *lp)
         
         int print_lp(lprec *lp)
 
 
+############################################################
+# Structs for buffering the constraints
+
+cdef extern from "Python.h":
+    void* malloc "PyMem_Malloc"(size_t n)
+    void* realloc "PyMem_Realloc"(void *p, size_t n)
+    void free "PyMem_Free"(void *p)
+
+
 cdef extern from "stdlib.h":
-    void* malloc(size_t)
-    void* realloc(void*, size_t)
-    void free(void*)
+    void memset(void *p, char value, size_t n)
+
 
 class LPSolveException(Exception): pass
         
-# Set the presolve flags
-cdef dict _presolve_flags = {
-"presolve_none" :          0,
-"presolve_rows" :          1,
-"presolve_cols" :          2,
-"presolve_lindep" :        4,
-"presolve_aggregate" :     8,
-"presolve_sparser" :      16,
-"presolve_sos" :          32,
-"presolve_reducemip" :    64,
-"presolve_knapsack" :    128,
-"presolve_elimeq2" :     256,
-"presolve_impliedfree" : 512,
-"presolve_reducegcd"   : 1024,
-"presolve_probefix"    : 2048,
-"presolve_probereduce" : 4096,
-"presolve_rowdominate" : 8192,
-"presolve_coldominate" : 16384,
-"presolve_mergerows"   : 32768,
-"presolve_impliedslk"  : 65536,
-"presolve_colfixdual"  : 131072,
-"presolve_bounds"      : 262144,
-"presolve_duals"       : 524288,
-"presolve_sensduals"   : 1048576}
-   
+################################################################################
+# Now the full class
+
+DEF m_NewModel      = 0
+DEF m_UpdatingModel = 1
+
+# This is the size of the constraint buffer blocks
+DEF cStructBufferSize = 128  
+
 cdef class LPSolve:
     """
     The class wrapping the lp_solve api 
     """
 
-    cdef real* rbuf, *rbuf_allocated
-    cdef int* intbuf, *intbuf_allocated
-    cdef size_t rbuf_size, intbuf_size
-    cdef int n_constraints
-
     cdef lprec *lp
-    cdef readonly dict options
+    cdef size_t n_columns, n_rows
+
+    # Option dict
+    cdef dict options
+
+    # constraints
+    cdef _Constraint **_c_buffer
+    cdef size_t current_c_buffer_size
+
+    # Variable bounds
+    cdef dict _var_bounds
+    
+    # The objective function
+    cdef list _obj_func_values
+
+    # Methods relating to named variable group
+    cdef dict _named_index_blocks
 
     def __cinit__(self):
+
         self.lp = NULL
-        self.rbuf = self.rbuf_allocated = NULL
-        self.intbuf = self.intbuf_allocated = NULL
+        self.options = default_options.copy()
 
-        self.options = {}
+        self.current_c_buffer_size = 0
+        self._c_buffer = NULL
 
-        # Set the default options
-        for k, v in _presolve_flags.iteritems():
-            self.options[k] = False
+        self._var_bounds = {}
+        self._obj_func_values = []
+        self._named_index_blocks = {}
 
     def __dealloc__(self):
-        if self.rbuf_allocated != NULL: free(self.rbuf_allocated)
-        if self.intbuf_allocated != NULL: free(self.intbuf_allocated)
-        if self.lp != NULL: delete_lp(self.lp)
-
-    def __init__(self, size_t allocated_rows, size_t allocated_cols):
-        self.lp = make_lp(0, allocated_cols)
-
-        # Doing resize second means we just allocate space for that many rows, not create them.
-        self.resize(allocated_rows, allocated_cols)
-
-        if self.lp == NULL:
-            raise LPSolveException("Error creating model with %d rows and %d columns."
-                                   % (allocated_rows, allocated_cols))
-
-
-    cpdef resize(self, size_t allocated_rows = 0, size_t allocated_cols = 0):
-        """
-        Resixes the lp.  This is analagous to lp_solve's resize function.
-        """
-
-        if allocated_rows == 0: allocated_rows = self.nRows()
-        if allocated_cols == 0: allocated_cols = self.nColumns()
-
-        if resize_lp(self.lp, allocated_rows, allocated_cols) != 1:
-            raise LPSolveException("Error sizing/resizing model to %d rows and %d columns."
-                                   % (allocated_rows, allocated_cols))
+        self.clearConstraintBuffers()
         
-    cpdef getOptions(self):
+        if self.lp != NULL:
+            delete_lp(self.lp)
+
+    ############################################################
+    # Methods concerned with getting and setting the options
+
+    def getOptions(self):
         return self.options.copy()
 
-    cpdef setObjective(self, coefficients):
+    def setOption(self, str name, value):
         """
-        Sets the objective function.
+        Presolve options
+        ==================================================
         
-        `coefficients` may be either a single array, a dictionary, or
-        a 2-tuple with the form (index array, value array).  In the
-        case of a single array, it must be 1 dimensional and have the
-        same length as the number of columns in the lp.  If it is a
-        dictionary, the keys of the dictionary are the indices of the
-        non-zero values which are given by the corresponding values.
-        If it is a (index array, value array) pair, the corresponding
-        pairs have the same behavior.
+        Available presolve options are::
+
+          presolve_none:
+            No presolve at all.
+
+          presolve_rows:
+            Presolve rows.
+
+          presolve_cols:
+            Presolve columns.
+
+          presolve_lindep:
+            Eliminate linearly dependent rows.
+
+          presolve_sos:
+            Convert constraints to SOSes (only SOS1 handled).
+
+          presolve_reducemip:
+            If the phase 1 solution process finds that a constraint is
+            redundant then this constraint is deleted. This is no
+            longer active since it is very rare that this is
+            effective, and also that it adds code complications and
+            delayed presolve effects that are not captured properly.
+
+          presolve_knapsack:
+            Simplification of knapsack-type constraints through
+            addition of an extra variable, which also helps bound the
+            OF.
+
+          presolve_elimeq2:
+            Direct substitution of one variable in 2-element equality
+            constraints; this requires changes to the constraint
+            matrix.
+
+          presolve_impliedfree:
+            Identify implied free variables (releasing their explicit
+            bounds).
+
+          presolve_reducegcd: 
+            Reduce (tighten) coefficients in integer models based on
+            GCD argument.
+
+          presolve_probefix:
+            Attempt to fix binary variables at one of their bounds.
+
+          presolve_probereduce:
+            Attempt to reduce coefficients in binary models.
+
+          presolve_rowdominate: 
+            Idenfify and delete qualifying constraints that are
+            dominated by others, also fixes variables at a bound.
+
+          presolve_coldominate:
+            Deletes variables (mainly binary), that are dominated by
+            others (only one can be non-zero).
+
+          presolve_mergerows:
+            Merges neighboring >= or <= constraints when the vectors
+            are otherwise relatively identical into a single ranged
+            constraint.
+
+          presolve_impliedslk:
+            Converts qualifying equalities to inequalities by
+            converting a column singleton variable to slack. The
+            routine also detects implicit duplicate slacks from
+            inequality constraints, fixes and removes the redundant
+            variable. This latter removal also tends to reduce the
+            risk of degeneracy. The combined function of this option
+            can have a dramatic simplifying effect on some models.
+
+          presolve_colfixdual: 
+            Variable fixing and removal based on considering signs of
+            the associated dual constraint.
+
+          presolve_bounds:
+            Does bound tightening based on full-row constraint
+            information. This can assist in tightening the OF bound,
+            eliminate variables and constraints. At the end of
+            presolve, it is checked if any variables can be deemed
+            free, thereby reducing any chance that degeneracy is
+            introduced via this presolve option..
+
+          presolve_duals:
+            Calculate duals.
+
+          presolve_sensduals:
+            Calculate sensitivity if there are integer variables.
+
+        Presolve options are turned on (or disabled, if turned on
+        previously with setOption) by passing ``presolve_x = True``.
+
+
+        Pricing and Pivoting Options
+        ==================================================
+        
+        Available pricer options::
+    
+          price_primalfallback: 
+            In case of Steepest Edge, fall back to DEVEX in primal.
+
+          price_multiple:	
+            Preliminary implementation of the multiple pricing
+            scheme. This means that attractive candidate entering
+            columns from one iteration may be used in the subsequent
+            iteration, avoiding full updating of reduced costs.  In
+            the current implementation, lp_solve only reuses the 2nd
+            best entering column alternative.
+
+          price_partial:	
+            Enable partial pricing.
+
+          price_adaptive:	
+            Temporarily use alternative strategy if cycling is detected.
+
+          price_randomize:	
+            Adds a small randomization effect to the selected pricer.
+
+          price_autopartial:	
+            Indicates automatic detection of segmented/staged/blocked
+            models. It refers to partial pricing rather than full
+            pricing. With full pricing, all non-basic columns are
+            scanned, but with partial pricing only a subset is scanned
+            for every iteration. This can speed up several models.
+
+          price_loopleft:	
+            Scan entering/leaving columns left rather than right.
+
+          price_loopalternate:	
+            Scan entering/leaving columns alternatingly left/right.
+
+          price_harristwopass:	
+            Use Harris' primal pivot logic rather than the default.
+
+          price_truenorminit:	
+            Use true norms for Devex and Steepest Edge initializations.
         """
 
-        cdef ar a
+        cdef str n = name.lower()
+        
+        if n not in self.options:
+            raise ValueError("Option '%s' not valid." % name)
+
+        self.options[n] = value
+
+    ############################################################
+    # Methods relating to variable indices
+
+    cpdef ar getVariableIndexBlock(self, size_t size, str name = None):
+        """
+        Returns a new or current block of 'size' variable indices to
+        be used in the current LP.
+        
+        If `name` is not None, then other functions
+        (e.g. addConstraint) can accept this accept this string as the
+        index argument.
+
+        # Put in use cases
+
+        """
+
         cdef ar idx
-        cdef dict d
-        cdef size_t n, i, k, s
-        cdef bint sizing_okay
-        
 
-        if isinstance(coefficients, ar):
-            a = coefficients
-            s = a.size
-
-            print a.size, a.shape[0], a.shape[1]
-
-            if a.ndim != 1:
-                
-                sizing_okay = False
-
-                for 0 <= i < a.ndim:
-                    if a.size == a.shape[i]:
-                        a = a.ravel()
-                        sizing_okay = True
-                        break
-
-                if not sizing_okay:
-                    raise LPSolveException("Only 1-d arrays are allowed for coefficients of objective function.")
-
-            self._check_full_sizing(a)
-            self._copy_into_real_buffer(a)
-
-            if set_obj_fn(self.lp, self.rbuf - 1) != 1:
-                raise LPSolveException("Error adding objective function.")
-
-        elif type(coefficients) is dict:
-            d = coefficients
-            n = len(d)
-
-            self._resize_real_buffer(n)
-            self._resize_int_buffer(n)
-            
-            i = 0
-            for k, v in d.iteritems():
-                self.intbuf[i] = k + 1
-                self.rbuf[i] = v
-                i += 1
-
-            if set_obj_fnex(self.lp, n, self.rbuf, self.intbuf) != 1:
-                raise LPSolveException("Error adding objective function.")
-
-        elif (type(coefficients) is tuple or type(coefficients) is list) and len(coefficients) == 2:
-            
-            idx, a = coefficients
-            n = idx.shape[0]
-
-            if idx.shape[0] != a.shape[0]:
-                raise LPSolveException("Index array and coefficient array do not have the same shape.")
-
-            self._copy_into_real_buffer(a)
-            self._copy_into_int_buffer_shift(idx)
-
-            if set_obj_fnex(self.lp, n, self.rbuf, self.intbuf) != 1:
-                raise LPSolveException("Error adding objective function.")
+        if name is None:
+            idx = uint(arange(self.n_columns, self.n_columns + size))
+            self.n_columns += size
+            return idx
         else:
-            raise LPSolveException("coefficients argument must either be a 1d array, 2-tuple, or dict.")
+            if name in self._named_index_blocks:
+                idx = self._named_index_blocks[name]
+                if idx.shape[0] != size:
+                    raise ValueError("Requested size (%d) does not match previous size (%d) of index block '%s'"
+                                     % (size, idx.shape[0], name))
+                return idx
+            else:
+                idx = uint(arange(self.n_columns, self.n_columns + size))
+                self.n_columns += size
+                self._named_index_blocks[name] = idx
+                return idx
+                
+    def getVariableIndex(self, str name = None):
+        """
+        Returns a single unused index (unless name refers to a
+        previously named index).
+        """
 
+        if name is None:
+            self.n_columns += 1
+            return self.n_columns -1
+        else:
+            return self.getVariableIndexBlock(1, name)[0]
 
+    ############################################################
+    # Methods dealing with constraints
 
     cpdef addConstraint(self, coefficients, str constraint_type, rhs):
         """        
         Adds a constraint, or set of constraints to the lp.
 
         `coefficients` may be either a single array, a dictionary, or
-        a 2-tuple with the form (index array, value array).  In the
+        a 2-tuple with the form (index block, value array).  In the
         case of a single array, it must be either 1 or 2 dimensional
         and have the same length/number of columns as the number of
         columns in the lp.  If it is 2 dimensions, each row
@@ -268,9 +371,26 @@ cdef class LPSolve:
         cdef ar[double] bcast
         cdef ar col_idx
         cdef size_t i, k, n, m
-        cdef real v, rhs_real
 
-        cdef int constraint_id
+        cdef ar idx, vals
+
+        cdef size_t size 
+
+        if type(coefficients) is tuple or type(coefficients) is list:
+
+            if len(coefficients) != 2:
+                raise TypeError("coefficients should be either a single array, "
+                                "a dictionary, or a 2-tuple with (index block, values)")
+
+            t_idx, t_vals = coefficients
+
+            
+
+
+            if type(t_idx) is 
+
+
+
 
         try:
             constraint_id = _constraint_map[constraint_type]
@@ -328,7 +448,7 @@ cdef class LPSolve:
                     raise LPSolveException("Length of index array (%d) must match number of coefficients (%d)."
                                             % (col_idx.shape[0], row.shape[0]))
 
-                self._copy_into_int_buffer_shift(col_idx)
+                self.copyIntoIndices_shift(col_idx)
                 self._copy_into_real_buffer(row)
                 self._addSparseConstraintFromBuffer(n, constraint_id, rhs)
 
@@ -341,7 +461,7 @@ cdef class LPSolve:
                         raise LPSolveException("Length of index array (%d) must match number of coefficients (%d)."
                                                 % (col_idx.shape[0], row.shape[1]))
 
-                    self._copy_into_int_buffer_shift(col_idx)
+                    self.copyIntoIndices_shift(col_idx)
                     m = row.shape[0]
                     bcast = self._ensure_rhs_is_1d_double(rhs, m)
 
@@ -361,7 +481,7 @@ cdef class LPSolve:
                     bcast = self._ensure_rhs_is_1d_double(rhs, m)
 
                     for i from 0 <= i < m:
-                        self._copy_into_int_buffer_shift(col_idx[i,:])
+                        self.copyIntoIndices_shift(col_idx[i,:])
                         self._copy_into_real_buffer(row[i,:])
                         self._addSparseConstraintFromBuffer(n, constraint_id, bcast[i])
                 else:
@@ -371,6 +491,96 @@ cdef class LPSolve:
                 raise LPSolveException("Coefficient matrix in sparse must be either 1d or 2d.")
         else:
             raise LPSolveException("coefficients argument must either be a 1d array, 2-tuple, or dict.")
+
+
+        
+
+    ############################################################
+    # methods dealing with the objective function
+
+    def clearObjective(self):
+        """
+        Clears the currnet objective function.  Because the 
+
+        """
+        
+        self._obj_func_values = []
+
+    cpdef setObjective(self, coefficients):
+        """
+        Sets the objective function.  
+        
+        `coefficients` may be either a single array, a dictionary, or
+        a 2-tuple with the form (index array, value array).  In the
+        case of a single array, it must be 1 dimensional and have the
+        same length as the number of columns in the lp.  If it is a
+        dictionary, the keys of the dictionary are the indices of the
+        non-zero values which are given by the corresponding values.
+        If it is a (index array, value array) pair, the corresponding
+        pairs have the same behavior.
+        """
+
+        cdef ar a
+        cdef ar idx
+        cdef dict d
+        cdef size_t n, i, k, s
+        cdef bint sizing_okay
+
+        if isinstance(coefficients, ar):
+            a = coefficients
+            s = a.size
+
+            if a.ndim != 1:
+                
+                sizing_okay = False
+
+                for 0 <= i < a.ndim:
+                    if a.size == a.shape[i]:
+                        a = a.ravel()
+                        sizing_okay = True
+                        break
+
+                if not sizing_okay:
+                    raise LPSolveException("Only 1-d arrays are allowed for coefficients of objective function.")
+
+            self._check_full_sizing(a)
+            self._copy_into_real_buffer(a)
+
+            if set_obj_fn(self.lp, self.rbuf - 1) != 1:
+                raise LPSolveException("Error adding objective function.")
+
+        elif type(coefficients) is dict:
+            d = coefficients
+            n = len(d)
+
+            self._resize_real_buffer(n)
+            self._resize_int_buffer(n)
+            
+            i = 0
+            for k, v in d.iteritems():
+                self.intbuf[i] = k + 1
+                self.rbuf[i] = v
+                i += 1
+
+            if set_obj_fnex(self.lp, n, self.rbuf, self.intbuf) != 1:
+                raise LPSolveException("Error adding objective function.")
+
+        elif (type(coefficients) is tuple or type(coefficients) is list) and len(coefficients) == 2:
+            
+            idx, a = coefficients
+            n = idx.shape[0]
+
+            if idx.shape[0] != a.shape[0]:
+                raise LPSolveException("Index array and coefficient array do not have the same shape.")
+
+            self._copy_into_real_buffer(a)
+            self.copyIntoIndices_shift(idx)
+
+            if set_obj_fnex(self.lp, n, self.rbuf, self.intbuf) != 1:
+                raise LPSolveException("Error adding objective function.")
+        else:
+            raise LPSolveException("coefficients argument must either be a 1d array, 2-tuple, or dict.")
+
 
         
     cdef _addConstraintDirect(self, ar row, int constraint_id, real rhs):
@@ -399,7 +609,9 @@ cdef class LPSolve:
             t += abs(self.rbuf[i])
         
         t /= n
-        assert t > 0
+
+        if t == 0:
+            return t
 
         for i from 0 <= i < n:  
             self.rbuf[i] /= t
@@ -434,21 +646,42 @@ cdef class LPSolve:
         set_unbounded(self.lp, idx + 1)
 
 
-    cpdef setLowerBound(self, size_t idx, real lb):
+    cpdef setLowerBound(self, size_t idx, lb):
         """
-        Sets the variable `idx` to unbounded (default is positive).
+        Sets the lower bound of variable idx to lb.  If lb is None,
+        then it sets the lower bound to -Infinity.
+        """
+        cdef real ub
+        
+        if lb is None:  # free it
+
+            ub = get_upbo(self.lp, idx + 1)
+
+            set_unbounded(self.lp, idx + 1)
+            
+            if ub != get_infinite(self.lp):
+                set_upbo(self.lp, idx + 1, ub)
+        else:
+            set_lowbo(self.lp, idx + 1, <real?>lb)
+
+    cpdef setUpperBound(self, size_t idx, ub):
+        """
+        Sets the upper bound of variable idx to ub.  If ub is None,
+        then it sets the upper bound to Infinity.
         """
 
-        set_lowbo(self.lp, idx + 1, lb)
+        cdef real lb
+        
+        if ub is None:  # free it
 
+            lb = get_lowbo(self.lp, idx + 1)
 
-    cpdef setUpperBound(self, size_t idx, real ub):
-        """
-        Sets the variable `idx` to unbounded (default is positive).
-        """
-
-        set_upbo(self.lp, idx + 1, ub)
-
+            set_unbounded(self.lp, idx + 1)
+            
+            if lb != get_infinite(self.lp):
+                set_lowbo(self.lp, idx + 1, lb)
+        else:
+            set_upbo(self.lp, idx + 1, <real?>ub)
 
     cpdef addingConstraints(self):
         """
@@ -468,33 +701,27 @@ cdef class LPSolve:
 
     def solve(self, **options):
         """
-        Solves the given model.  Currently, takes as options only the
-        various presolve options.  For example, to turn on
-        presolve_rows, pass presolve_rows=True as one of the
-        arguments.
-        
-        Available presolve options are:
+        Solves the given model.  
 
-        presolve_none, presolve_rows, presolve_cols, presolve_lindep,
-        presolve_aggregate, presolve_sparser, presolve_sos,
-        presolve_reducemip, presolve_knapsack, presolve_elimeq2,
-        presolve_impliedfree, presolve_reducegcd, presolve_probefix,
-        presolve_probereduce, presolve_rowdominate,
-        presolve_coldominate, presolve_mergerows, presolve_impliedslk,
-        presolve_colfixdual, presolve_bounds, presolve_duals,
-        presolve_sensduals.
 
-        Note: in my experience, the best all-around combination seems
-        to be presolve_rows, presolve_cols, presolve_sparser and
-        presolve_lindep, but this might be quite problem dependent.
+        Basis options
+        ==================================================
+
+        To initialize the model with a specific basis, pass ``basis =
+        <ndarray>`` as one of the arguments.  The basis must be a
+        saved basis from a previous call to getBasis(), on a solved
+        model. 
         """
 
-        # Get the current options dict
-        cdef dict option_dict = self.getOptions().copy()
-        option_dict.update(options)
-
-        # See if there are any flags having to do with the presolve
         cdef str k
+
+        # Get the current options dict
+        cdef dict option_dict = self.getOptions()
+
+        for k, v in options.iteritems():
+            option_dict[k.lower()] = v
+
+        # Set any flags having to do with the presolve
         cdef unsigned long n
         cdef unsigned long presolve = 0
 
@@ -503,6 +730,26 @@ cdef class LPSolve:
                 presolve += n
         
         set_presolve(self.lp, presolve, 100)
+
+        # Set any flags having to do with the pricing
+        if "pricer" in option_dict:
+            
+            pricer = option_dict["pricer"].lower()
+
+            if type(pricer) is not str or pricer not in _pricer_lookup:
+                raise ValueError("pricer option must be one of %s."
+                                 % (','.join(["'%s'" % p for p in _pricer_lookup.iterkeys()])))
+        else:
+            pricer = "devex"
+            
+        cdef int pricer_option = _pricer_lookup[pricer]
+
+        # Now see if there are other flags in this mix
+        for k, n in _pricer_flags.iteritems():
+            if k in option_dict and option_dict[k]:
+                pricer_option += n
+
+        set_pivoting(self.lp, pricer_option)
 
         cdef int ret = solve(self.lp)
         
@@ -592,171 +839,101 @@ cdef class LPSolve:
 
         return get_objective(self.lp)
 
-    cpdef print(self):
+    cpdef print_lp(self):
         print_lp(self.lp)
 
 
-    ##################################################
-    # Now the lower level stuff
+    ############################################################
+    # Methods for dealing with the constraint buffers
 
-    cdef _check_full_sizing(self, ar a):
-        cdef size_t nr = get_Ncolumns(self.lp)
-    
-        if a.shape[0] != nr:
-            raise LPSolveException("Row size (%d) does not equal the current number of columns (%d)."
-                                   % (a.shape[0], nr))
-
-    ##############################
-    # Buffer control 
-
-    cdef _copy_into_real_buffer(self, ar a):
-    
-        self._resize_real_buffer(a.shape[0])
-
-        if a.dtype == np.float32:
-            self._copy_into_real_buffer_float32(a)
-        elif a.dtype == np.float64:
-            self._copy_into_real_buffer_float64(a)
-        else:
-            self._copy_into_real_buffer_float64(np.asarray(a, dtype=np.float64))
-
-    cdef _copy_into_real_buffer_float32(self, ar a_float32_o):
-        cdef size_t i
-        cdef ar[float32_t] a_float32 = a_float32_o
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a_float32.shape[0]:
-                self.rbuf[i] = a_float32[i]
-
-    cdef _copy_into_real_buffer_float64(self, ar a_float64_o):
-        cdef size_t i
-        cdef ar[float64_t] a_float64 = a_float64_o
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a_float64.shape[0]:
-                self.rbuf[i] = a_float64[i]
+    cdef setConstraint(self, size_t row_idx, ar idx, ar row, str ctypestr, rhs):
         
-    
-    cdef _copy_into_int_buffer(self, ar a):
+        # First get the right cstr
+        cdef _Constraint* cstr = self.getConstraintStruct(row_idx)
 
-        self._resize_int_buffer(a.shape[0])
+        if cstr == NULL:
+            raise MemoryError
 
-        if a.dtype is np.int32:
-            self._copy_into_int_buffer_int32(a)
-        elif a.dtype is np.uint32:
-            self._copy_into_int_buffer_uint32(a)
-        elif a.dtype is np.int64:
-            self._copy_into_int_buffer_int64(a)
-        elif a.dtype is np.uint64:
-            self._copy_into_int_buffer_uint64(a)
-        else:
-            self._copy_into_int_buffer_uint32(np.asarray(a, dtype=np.uint32))
+        setupConstraint(cstr, row_idx, idx, row, ctypestr, rhs)
 
-    cdef _copy_into_int_buffer_int32(self, ar a_o):
+    cdef addConstraint(self, ar idx, ar row, str ctypestr, rhs):
+        cdef size_t row_idx = self.n_rows
+        self.setConstraint(row_idx, idx, row, ctypestr, rhs)
+        return row_idx
 
-        cdef ar[int32_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i]
-
-    cdef _copy_into_int_buffer_uint32(self, ar a_o):
-
-        cdef ar[uint32_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i]
-
-    cdef _copy_into_int_buffer_int64(self, ar a_o):
-
-        cdef ar[int64_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i]
-
-    cdef _copy_into_int_buffer_uint64(self, ar a_o):
-
-        cdef ar[uint64_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i]
-
-
-    cdef _copy_into_int_buffer_shift(self, ar a):
-
-        self._resize_int_buffer(a.shape[0])
-
-        if a.dtype is np.int32:
-            self._copy_into_int_buffer_int32_shift(a)
-        elif a.dtype is np.uint32:
-            self._copy_into_int_buffer_uint32_shift(a)
-        elif a.dtype is np.int64:
-            self._copy_into_int_buffer_int64_shift(a)
-        elif a.dtype is np.uint64:
-            self._copy_into_int_buffer_uint64_shift(a)
-        else:
-            self._copy_into_int_buffer_uint32_shift(np.asarray(a, dtype=np.uint32))
-
-    cdef _copy_into_int_buffer_int32_shift(self, ar a_o):
-
-        cdef ar[int32_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i] + 1
-
-    cdef _copy_into_int_buffer_uint32_shift(self, ar a_o):
-
-        cdef ar[uint32_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i] + 1
-
-    cdef _copy_into_int_buffer_int64_shift(self, ar a_o):
-
-        cdef ar[int64_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i] + 1
-
-    cdef _copy_into_int_buffer_uint64_shift(self, ar a_o):
-
-        cdef ar[uint64_t] a = a_o
-        cdef size_t i
-
-        with cython.boundscheck(False):
-            for i from 0 <= i < a.shape[0]:
-                self.intbuf[i] = a[i] + 1
-
-    cdef void _resize_real_buffer(self, size_t n):
-        if self.rbuf_allocated == NULL:
-            self.rbuf_allocated = <real*>malloc( (n+1)*sizeof(real) )
-        elif self.rbuf_size < n:
-            self.rbuf_allocated = <real*>realloc(self.rbuf_allocated, (n+1)*sizeof(real))
+    cdef _Constraint* getConstraintStruct(self, size_t row_idx):
         
-        self.rbuf = self.rbuf_allocated + 1
-        self.rbuf_size = n
+        # First see if our double-buffer thing is ready to go
+        cdef size_t buf_idx = <size_t>(row_idx // cStructBufferSize)
+        cdef size_t idx     = <size_t>(row_idx % cStructBufferSize)
+        cdef size_t new_size
+
+        cdef _Constraint* buf
+
+        # Ensure proper sizing of constraint buffer
+        if buf_idx >= self.current_c_buffer_size:
+            
+            # Be agressive, since we anticipate growing incrementally,
+            # and each one is a lot of constraints
+
+            new_size = 128 + 2*buf_idx
+            new_size -= (new_size % 128)
+
+            if self._c_buffer == NULL:
+                self._c_buffer = <_Constraint**>malloc(new_size*sizeof(_Constraint*))
+            else:
+                self._c_buffer = <_Constraint**>realloc(self._c_buffer, new*sizeof(_Constraint*))
+            
+            if self._c_buffer == NULL:
+                return NULL  
+
+            memset(&self._c_buffer[self.current_c_buffer_size-1], 0,
+                    (buf_idx - self.current_c_buffer_size)*sizeof(_Constraint*))
+
+            self.current_c_buffer_size = new_size
+
+        # Now make sure that buffer is ready
+        buf = self._c_buffer[buf_idx]
+        
+        if buf == NULL:
+            buf = self._c_buffer[buf_idx] = \
+                malloc(cStructBufferSize*sizeof(_Constraint))
+            
+            if buf == NULL:
+                return NULL
+
+            memset(buf, 0, cStructBufferSize*sizeof(_Constraint))
+
+        # Now finally this determines the new model size
+
+        if row_idx >= self.n_rows:
+            self.n_rows = row_idx + 1
+        
+        return &buf[idx]
         
 
-    cdef void _resize_int_buffer(self, size_t n):
-        if self.intbuf_allocated == NULL:
-            self.intbuf_allocated = <int*>malloc( (n+1)*sizeof(int) )
-        elif self.intbuf_size < n:
-            self.intbuf_allocated = <int*>realloc(self.intbuf_allocated, (n+1)*sizeof(int))
-        
-        self.intbuf = self.intbuf_allocated + 1
-        self.intbuf_size = n
-        
+    cdef void clearConstraintBuffers(self):
 
+        cdef size_t i, j
+        cdef _Constraint* buf
+
+        if self._c_buffer == NULL:
+            return
+
+        for 0 <= i < self.current_c_buffer_size:
+            
+            buf = self._c_buffer[i]
+            
+            if buf == NULL:
+                continue
+
+            for 0 <= j < cStructBufferSize:
+                if inUse(&buf[j]):
+                    clearConstraint(&buf[j])
+
+            free(buf)
+
+        free(self._c_buffer)
+        
+        self.current_c_buffer_size = 0
+        self._c_buffer = NULL
