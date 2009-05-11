@@ -36,7 +36,11 @@ _default_options = {
     "price_loopleft"       :  False,
     "price_loopalternate"  :  False,
     "price_harristwopass"  :  False,
-    "price_truenorminit"   :  False}
+    "price_truenorminit"   :  False,
+
+    # Bookkeeping stuff
+    "verbosity"            :  1       # Lowest
+}
 
      
 # Set the presolve flags

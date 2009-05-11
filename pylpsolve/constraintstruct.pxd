@@ -3,8 +3,10 @@
 # lower-level considerations with lp_solve
 
 from numpy cimport ndarray as ar
-from numpy cimport float32_t, float64_t, int32_t, uint32_t, int64_t, uint64_t
-from numpy import float32,float64,int32,uint32,int64,uint64
+from numpy cimport int32_t, uint32_t, int64_t, uint64_t, float_t
+from numpy import int32,uint32,int64,uint64
+
+from types cimport isnumeric
 
 cdef extern from "Python.h":
     void* malloc "PyMem_Malloc"(size_t n)
@@ -15,6 +17,7 @@ cdef extern from "lpsolve/lp_lib.h":
     ctypedef void lprec
 
     ecode set_rowex(lprec *lp, int row_no, int count, real *row, int *colno)
+    ecode set_row(lprec *lp, int row_no, real *row)
     ecode set_constr_type(lprec *lp, int row, int con_type)
     ecode set_rh(lprec *lp, int row, real value)
     ecode set_rh_range(lprec *lp, int row, real deltavalue)
@@ -62,12 +65,24 @@ cdef getCType(str ctypestr):
 # Now functions and a struct dealing with the constraints
 
 cdef struct _Constraint:
+    # Dealing with the indices; if index_range_mode is true, then the
+    # indices refer to a range rather than individual indices
     cdef int *indices
+    cdef int index_range_start  # the first index of the length n
+                                # block that is the indices. If
+                                # negative; not used.
+
+    # The values
     cdef double *values
+
+    # The total size
     cdef size_t n
     cdef int ctype
     cdef double rhs1, rhs2
     cdef size_t row_idx
+
+########################################
+# Methods to deal with this constraint
 
 cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, str ctypestr, rhs):
 
@@ -75,81 +90,113 @@ cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, s
     if cstr.n != 0:
         clearConstraint(cstr)
 
-    assert row.ndim == 1
-
-    cstr.n = row.shape[0]
-
-    cstr.row_idx = row_idx
-
     ########################################
     # Check possible bad configurations of ctype, rhs
     cstr.ctype = getCType(ctypestr)
 
     if cstr.ctype in [constraint_leq, constraint_geq, constraint_eq]:
-        assert type(rhs) is float
-        cstr.rhs1 = rhs
+        if not isnumeric(rhs):
+            raise TypeError("Constraint type '%s' requires right hand side to be scalar." % ctypestr)
+
+        cstr.rhs1 = <double>rhs
     elif cstr.ctype == constraint_in:
-        assert type(rhs) is tuple
-        assert len(<tuple>rhs) == 2
-
-        cstr.rhs1, cstr.rhs2 = (<tuple>rhs)
-
+        if type(rhs) is tuple and len(<tuple>rhs) == 2:
+            cstr.rhs1, cstr.rhs2 = (<tuple>rhs)
+        elif type(rhs) is list and len(<list>rhs) == 2:
+            cstr.rhs1, cstr.rhs2 = (<list>rhs)
+        else:
+            raise TypeError("Constraint type '%s' requires right hand side to be either 2-tuple or 2-list." % ctypestr)
+    else:
+        assert False
+    
+    ########################################
     # Now that these tests pass, copy all the values in.
-    cstr.values = <double*> malloc((cstr.n+1)*sizeof(double))
 
-    if cstr.values == NULL:
-        raise MemoryError
+    cdef bint fill_mode = False
+    cdef double fill_value = 0
 
-    cstr.values[0] = 0
+    # Initializing stuff having to deal with the range indexing
+    cdef bint idx_range_mode = False
+    cdef int il, iu
+    cstr.index_range_start = -1  # indicating not used
 
-    if idx is None:
+    # Determine the size
+    if idx is not None:
+
+        if idx.ndim == 1:
+            if idx.shape[0] != 1 and row.shape[0] == 1:
+                cstr.n = idx.shape[0]
+                fill_mode = True
+                fill_value = row[0]
+            elif idx.shape[0] == row.shape[0]:
+                cstr.n = idx.shape[0]
+            else:
+                assert False
+        elif idx.ndim == 2:  
+            # this means it defines a range instead of individual values
+            assert idx.shape[0] == 1
+            assert idx.shape[1] == 2
+
+            il = idx[0,0]
+            iu = idx[0,1]
+            assert iu > il
+
+            cstr.n = iu - il
+            cstr.index_range_start = il + 1  # for 1-based counting of indices
+            idx_range_mode = True
+        else:
+            assert False
+
+    else:
+        cstr.n = row.shape[0]
+
+    # Set the indices
+    if idx is None or idx_range_mode:
         cstr.indices = NULL
-        cstr.copyIntoValues(row, True)
     else:
         cstr.indices = <int *> malloc((cstr.n+1)*sizeof(int))
 
         if cstr.indices == NULL:
             raise MemoryError
 
-        cstr.copyIntoIndices(idx)
-        cstr.copyIntoValues(row, False)
+        copyIntoIndices(cstr, idx)
+
+    # Set the values
+    cstr.values = <double*> malloc((cstr.n+1)*sizeof(double))
+
+    if cstr.values == NULL:
+        raise MemoryError
+
+    if fill_mode:
+        fillValues(cstr, fill_value)
+    else:
+        copyIntoValues(cstr, row)
 
 
 ############################################################
-# Reliably copying in the indices and values; need to handle all
-# the possible types
+# Reliably copying in the indices and values; need to handle all the
+# possible types.  For values, it's npfloat.  For the others, any
+# integer should work.
 
- ########################################
+
+########################################
 # Values
 
-cdef inline copyIntoValues(_Constraint* cstr, ar a):
+cdef inline copyIntoValues(_Constraint* cstr, ar a_o):
 
-    dt = a.dtype
-
-    if dt is float32:
-        copyIntoValues_float32(cstr, a)
-    elif dt is float64:
-        copyIntoValues_float64(cstr, a)
-    else:
-        copyIntoValues_float64(cstr, float64(a))
-
-cdef inline copyIntoValues_float32(_Constraint* cstr, ar a_float32_o):
     cdef size_t i
-    cdef ar[float32_t] a_float32 = a_float32_o
+    cdef ar[float_t] a = a_o
 
     with cython.boundscheck(False):
-        for 0 <= i < a_float32.shape[0]:
-            cstr.values[i+1] = a_float32[i]
+        for 0 <= i < a.shape[0]:
+            cstr.values[i+1] = a[i]
 
+cdef inline void fillValues(_Constraint* cstr, double v, size_t n):
 
-cdef inline copyIntoValues_float64(_Constraint* cstr, ar a_float64_o):
     cdef size_t i
-    cdef ar[float64_t] a_float64 = a_float64_o
 
-    with cython.boundscheck(False):
-        for 0 <= i < a_float64.shape[0]:
-            cstr.values[i+1] = a_float64[i]
-
+    for 1 <= i <= n:
+        cstr.values[i] = v
 
 ########################################
 # Now handling the index buffer
@@ -161,8 +208,21 @@ cdef inline copyIntoIndices(_Constraint* cstr, ar a):
     elif dt is uint32:   copyIntoIndices_uint32(cstr, a)
     elif dt is int64:    copyIntoIndices_int64(cstr, a)
     elif dt is uint64:   copyIntoIndices_uint64(cstr, a)
-    else:                copyIntoIndices_uint32(cstr, uint32(a))
+    else:                
+        if sizeof(int) == 4:
+            ua = uint32(a)
+            if not (ua == a).all():
+                raise TypeError("Error converting index array to 32bit integers.")
 
+            copyIntoIndices_uint32(cstr, ua)
+        else:
+            ua = uint64(a)
+            if not (ua == a).all():
+                raise TypeError("Error converting index array to 64bit integers.")
+
+            copyIntoIndices_uint64(cstr, ua)
+
+            
 cdef inline copyIntoIndices_int32(_Constraint *cstr, ar a_o):
 
     cdef ar[int32_t] a = a_o
@@ -202,7 +262,7 @@ cdef inline copyIntoIndices_uint64(_Constraint *cstr, ar a_o):
 ############################################################
 # Now the routines to add this to the model
 
-cdef inline setInLP(_Constraint *cstr, lprec* lp, size_t n_cols):
+cdef inline setInLP(_Constraint *cstr, lprec* lp, size_t n_cols, int *countrange):
 
     if self.n == 0:
         return
@@ -211,41 +271,45 @@ cdef inline setInLP(_Constraint *cstr, lprec* lp, size_t n_cols):
     if cstr.indices == NULL and cstr.n != n_cols:
         _setIndicesToRange(cstr)
 
-    # Next add the constraint
-
     # Vanila constraint
     if cstr.ctype in [constraint_leq, constraint_geq, constraint_equal]:
-        _setRow(cstr, lp, cstr.row_idx, cstr.ctype, cstr.rhs1)
+        _setRow(cstr, lp, cstr.row_idx, cstr.ctype, cstr.rhs1, countrange)
 
     # range constraint
     elif cstr.ctype == constraint_in:
         if cstr.rhs1 < cstr.rhs2:
-            _setRow(cstr, lp, constraint_leq, cstr.rhs2)
+            _setRow(cstr, lp, constraint_leq, cstr.rhs2, countrange)
             set_rh_range(lp,  cstr.row_idx, cstr.rhs2 - cstr.rhs1)
         elif cstr.rhs1 > cstr.rhs2:
-            _setRow(cstr, lp, constraint_leq, cstr.rhs1)
+            _setRow(cstr, lp, constraint_leq, cstr.rhs1, countrange)
             set_rh_range(lp,  cstr.row_idx, cstr.rhs1 - cstr.rhs2)
         else:
-            _setRow(cstr, lp, constraint_eq, cstr.rhs1)
+            _setRow(cstr, lp, constraint_eq, cstr.rhs1, countrange)
     else:
         assert False  # no silent fail
 
-cdef inline _setRow(_Constraint *cstr, lp, int ctype, double rhs):
-    set_row_ex(lp, cstr.row_idx, cstr.n, cstr.values, cstr.indices)
+
+cdef inline _setRow(_Constraint *cstr, lp, int ctype, double rhs, int *countrange):
+
+    # Need to accommidate the start-at-1 indexing
+    if cstr.indices == NULL:
+        if cstr.index_range_start != -1:
+            set_row_ex(lp, cstr.row_idx, cstr.n, cstr.values+1, &countrange[cstr.index_range_start-1] )
+        else:
+            set_row(lp, cstr.row_idx, cstr.values)
+    else:
+        set_row_ex(lp, cstr.row_idx, cstr.values, cstr.n, cstr.values+1, cstr.indices+1)
+
     set_constr_type(lp, cstr.row_idx, ctype)
     set_rh(lp, cstr.row_idx, rhs)
+
 
 cdef inline _setIndicesToRange(_Constraint *cstr):
     cdef size_t i
 
-    # Need to reset the indices to be the first n indices
-    cstr.indices = <int*>malloc( (cstr.n + 1)*sizeof(int))
+    # all we need to do now that we're using range based indexing
+    cstr.index_range_start = 1
 
-    if cstr.indices == NULL:
-        raise MemoryError
-
-    for 1 <= i <= cstr.n:
-        cstr.indices[i] = i
 
 cdef inline void clearConstraint(_Constraint *cstr):
     if cstr.indices != NULL: free(cstr.indices)

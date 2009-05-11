@@ -1,5 +1,6 @@
-from numpy cimport ndarray as ar
-from numpy import empty, ones, zeros, uint, arange
+from numpy cimport ndarray as ar, uint_t, float_t
+
+from numpy import empty, ones, zeros, uint, arange, isscalar, amax, float as npfloat
 
 from constraintstruct cimport _Constraint, setupConstraint, \
     setInLP, clearConstraint, isInUse
@@ -13,6 +14,12 @@ ctypedef unsigned char ecode
 
 import optionlookup
 
+############################################################
+# An important check
+
+assert sizeof(uint_t) == sizeof(int)
+assert sizeof(float_t) == sizeof(double)
+
 ######################################################################
 # A few early binding things
 
@@ -21,6 +28,7 @@ cdef dict presolve_flags  = optionlookup._presolve_flags
 cdef dict pricer_lookup   = optionlookup._pricer_lookup
 cdef dict pricer_flags    = optionlookup._pricer_flags
 
+cdef double infty = 1e30
 
 ######################################################################
 # LPSolve constants
@@ -82,8 +90,6 @@ cdef extern from "stdlib.h":
     void memset(void *p, char value, size_t n)
 
 
-class LPSolveException(Exception): pass
-        
 ################################################################################
 # Now the full class
 
@@ -93,7 +99,7 @@ DEF m_UpdatingModel = 1
 # This is the size of the constraint buffer blocks
 DEF cStructBufferSize = 128  
 
-cdef class LPSolve:
+cdef class LPSolve(object):
     """
     The class wrapping the lp_solve api 
     """
@@ -109,13 +115,21 @@ cdef class LPSolve:
     cdef size_t current_c_buffer_size
 
     # Variable bounds
-    cdef dict _var_bounds
+    cdef list _lower_bound_keys, _lower_bound_values
+    cdef size_t _lower_bound_count
+
+    cdef list _upper_bound_keys, _upper_bound_valuse
+    cdef size_t _upper_bound_count
     
     # The objective function
+    cdef list _obj_func_keys
     cdef list _obj_func_values
+    cdef bint _obj_func_specified
+    cdef size_t _obj_func_n_vals_count 
 
     # Methods relating to named variable group
     cdef dict _named_index_blocks
+    cdef bint _nonindexed_blocks_present, _user_warned_about_nonindexed_blocks
 
     def __cinit__(self):
 
@@ -124,16 +138,46 @@ cdef class LPSolve:
 
         self.current_c_buffer_size = 0
         self._c_buffer = NULL
-
-        self._var_bounds = {}
-        self._obj_func_values = []
-        self._named_index_blocks = {}
+        
+        self._clear(False)
 
     def __dealloc__(self):
         self.clearConstraintBuffers()
         
         if self.lp != NULL:
             delete_lp(self.lp)
+
+    cdef _clear(self, bint restartable_mode):
+        # If restartable mode, only delete all the temporary stuff
+        # but still allow the user to tweak the model and resume the LP
+
+        self._lower_bound_keys   = []
+        self._lower_bound_values = []
+        self._lower_bound_count  = 0
+
+        self._upper_bound_keys   = []
+        self._upper_bound_valuse = []
+        self._upper_bound_count  = 0
+
+        self._obj_func_keys   = []
+        self._obj_func_values = []
+        self._obj_func_specified = False
+        self._obj_func_n_vals_count = 0
+
+        self.clearConstraintBuffers()
+
+        if not restartable_mode:  
+            if self.lp != NULL:
+                delete_lp(self.lp)
+                self.lp = NULL
+
+            self.n_rows = 0
+            self.n_columns = 0
+            
+            self._named_index_blocks = {}
+            self._user_warned_about_nonindexed_blocks = False
+            self._nonindexed_blocks_present = False
+
 
     ############################################################
     # Methods concerned with getting and setting the options
@@ -290,10 +334,11 @@ cdef class LPSolve:
 
         self.options[n] = value
 
+
     ############################################################
     # Methods relating to variable indices
 
-    cpdef ar getVariableIndexBlock(self, size_t size, str name = None):
+    def getVariableIndexBlock(self, size_t size, str name = None):
         """
         Returns a new or current block of 'size' variable indices to
         be used in the current LP.
@@ -305,12 +350,16 @@ cdef class LPSolve:
         # Put in use cases
 
         """
+        
+        self._getVariableIndexBlock(size, name)
+    
 
+    cdef ar _getVariableIndexBlock(self, size_t size, str name):
         cdef ar idx
 
         if name is None:
             idx = uint(arange(self.n_columns, self.n_columns + size))
-            self.n_columns += size
+            self.checkColumnCount(self.n_columns + size, True)
             return idx
         else:
             if name in self._named_index_blocks:
@@ -321,10 +370,11 @@ cdef class LPSolve:
                 return idx
             else:
                 idx = uint(arange(self.n_columns, self.n_columns + size))
-                self.n_columns += size
+                self.checkColumnCount(self.n_columns + size, True)
                 self._named_index_blocks[name] = idx
                 return idx
-                
+
+
     def getVariableIndex(self, str name = None):
         """
         Returns a single unused index (unless name refers to a
@@ -332,15 +382,120 @@ cdef class LPSolve:
         """
 
         if name is None:
-            self.n_columns += 1
-            return self.n_columns -1
+            ret_val = self.n_columns
+            self.checkColumnCount(self.n_columns + 1)
+            return ret_val
         else:
             return self.getVariableIndexBlock(1, name)[0]
+
+
+    ########################################
+    # For internally resolving things
+    cdef ar _resolveIdxBlock(self, idx, size_t n):
+    
+        if idx is None:
+            self.checkColumnCount(n, True)
+            return None
+
+        cdef ar ar_idx
+        cdef long ar_idx
+
+        if type(idx) is str:
+            return self.getVariableIndexBlock(<str>idx, n)
+
+        elif type(idx) is ndarray:
+            ar_idx = idx
+
+            if ar_idx.ndim != 1:
+                raise ValueError("Index array must be 1d vector.")
+            if ar_idx.shape[0] not in (n, 1):
+                raise ValueError("Length of index array (%d) must equal length of values (%d) or 1." 
+                                 % (ar_idx.shape[0], n))
+
+            self.checkColumnCount(amax(ar_idx), False)
+            return ar_idx.copy()  # Need to own the data
+
+        elif type(idx) is list or type(idx) is tuple:
+            try:
+                ar_idx = array(idx)
+            except Exception, e:
+                raise ValueError("Error converting index list to 1d array: %s" % str(e))
+            
+            if ar_idx.ndim != 1:
+                raise ValueError("Error interpreting index list: Not 1 dimensional.")
+            if ar_idx.shape[0] not in (n, 1):
+                raise ValueError("Length of index list (%d) must equal length of values (%d) or 1." 
+                                 % (ar_idx.shape[0], n))
+            
+            self.checkColumnCount(amax(ar_idx), False)
+            return ar_idx
+
+        elif isnumeric(idx):
+            v_idx = <size_t>idx
+            if v_idx != idx:
+                raise ValueError("%s not valid as nonnegative index. " % str(idx))
+
+            self.checkColumnCount(v_idx)
+            ar_idx = array([idx], dtype=uint)
+            return ar_idx
+
+        else:
+            raise TypeError("Type of index (%s) not recognized; must be scalar, list, tuple, str, or array." % type(idx))
+
+
+    cdef ar _resolveValues(self, v, bint ensure_1d):
+        cdef ar ret
+
+        if type(v) is ndarray:
+            ret = npfloat(v)
+        elif type(v) is list or type(v) is tuple:
+            ret = array(v, dtype=npfloat)
+        elif isnumeric(v):
+            ret = array([v],dtype=npfloat)
+        else:
+            raise TypeError("Type of values (%s) not recognized." % str(type(v)))
+
+        if ret.ndim == 1:
+            return ret
+        elif ret.ndim == 2:
+            if ensure_1d:
+                raise ValueError("Only 1d arrays allowed for values here.")
+            else:
+                return ret
+        else:
+            raise ValueError("Dimension of values array must be either 1 or 2.")
+        
+
+    ############################################################
+    # Bookkeeping for the column counts
+
+    cdef checkColumnCount(self, size_t requested_size, bint indexed):
+        if requested_size < self.n_columns:
+            if not indexed:
+                self._warnAboutNonindexedBlocks()
+
+        elif requested_size > self.n_columns:
+            if self._nonindexed_blocks_present:
+                self._warnAboutNonindexedBlocks()
+
+            self.n_columns = requested_size
+
+        if indexed:
+            self._nonindexed_blocks_present = True
+
+
+    cdef _warnAboutNonindexedBlocks(self):
+        if not self._user_warned_about_nonindexed_blocks:
+            warnings.warn("Non-indexed variable block present which does not span columns; "
+                          "setting to lowest-indexed columns.")
+            self._user_warned_about_nonindexed_blocks = True
+            
+
 
     ############################################################
     # Methods dealing with constraints
 
-    cpdef addConstraint(self, coefficients, str constraint_type, rhs):
+    def addConstraint(self, coefficients, str ctype, rhs):
         """        
         Adds a constraint, or set of constraints to the lp.
 
@@ -350,7 +505,7 @@ cdef class LPSolve:
         and have the same length/number of columns as the number of
         columns in the lp.  If it is 2 dimensions, each row
         corresponds to a constraint, and `rhs` must be a vector with a
-        coefficient for each row.  In this case, constraint_type must
+        coefficient for each row.  In this case, ctype must
         be the same for all rows.
 
         If it is a dictionary, the keys of the dictionary are the
@@ -360,309 +515,253 @@ cdef class LPSolve:
         If it is a (index array, value array) pair, the corresponding
         pairs have the same behavior as in the dictionary case.
 
-        `constraint_type` is a string determining the type of
+        `ctype` is a string determining the type of
         inequality or equality in the constraint.  The following are
         all valid identifiers: '<', '<=', '=<', 'lt', 'leq'; '>',
         '>=', '=>', 'gt', 'geq', '=', '==', 'equal', and 'eq'. 
         """
-        
-        cdef dict d
-        cdef ar row, b
-        cdef ar[double] bcast
-        cdef ar col_idx
-        cdef size_t i, k, n, m
+                
+        cdef bint is_list_sequence, is_numerical_sequence
+        cdef tuple t_coeff
 
-        cdef ar idx, vals
+        # What we do depends on the type
+        coefftype = type(coefficients)
 
-        cdef size_t size 
+        if coefftype is tuple:
+            t_coeff = <tuple>coefficients
 
-        if type(coefficients) is tuple or type(coefficients) is list:
-
-            if len(coefficients) != 2:
+            # Make sure it's split into index, value pair
+            if len(t_coeff) != 2:
                 raise TypeError("coefficients should be either a single array, "
                                 "a dictionary, or a 2-tuple with (index block, values)")
 
-            t_idx, t_vals = coefficients
+            return self._addConstraintArray(t_coeff[0], t_coeff[1], ctype, rhs)
 
+        elif coefftype is ndarray:
+            return self._addConstraintArray(None, coefficients, ctype, rhs)
+
+        elif coefftype is list:
+            # Two possible ways to interpret a list; as a sequence of
+            # tuples or as a representation of an array; if it is a
+            # sequence of 2-tuples, intepret it this way 
             
 
+            # Test and see if it's a list of sequences or numerical list
+            is_list_sequence = self._isTupleList(<list>coefficients)
 
-            if type(t_idx) is 
-
-
-
-
-        try:
-            constraint_id = _constraint_map[constraint_type]
-        except KeyError:
-            try:
-                constraint_id = _constraint_map[constraint_type.lower()]
-            except KeyError:
-                raise TypeError("Constraint type '%s' not recognized, valid identifiers are %s."
-                                % _valid_constraint_identifiers)
-
-        if isinstance(coefficients, ar):
-            row = coefficients
-
-            # If it's the basic deal
-            if row.ndim == 1:
-                self._addConstraintDirect(row, constraint_id, rhs)
-            elif row.size == row.shape[0]:
-                self._addConstraintDirect(row.ravel(), constraint_id, rhs)
-            elif row.ndim == 2:
-                # The case when we're adding a whole block of constraints at once.
-                m = row.shape[0]
-                bcast = self._ensure_rhs_is_1d_double(rhs, m)
-
-                for i from 0 <= i < m:
-                    self._addConstraintDirect(row[i, :], constraint_id, bcast[i])
+            if is_list_sequence: 
+                is_numerical_sequence = False
             else:
-                raise LPSolveException("Coefficient matrix must be either 1d or 2d.")
-
-        elif type(coefficients) is dict:
-
-            # Now adding a dictionary of terms
-            d = coefficients
-            n = len(d)
-
-            self._resize_real_buffer(n)
-            self._resize_int_buffer(n)
-
-            i = 0
-            for k, v in d.iteritems():
-                self.intbuf[i] = k + 1
-                self.rbuf[i] = v
-                i += 1
-
-            self._addSparseConstraintFromBuffer(n, constraint_id, rhs)
-
-        elif (type(coefficients) is tuple or type(coefficients) is list) and len(coefficients) == 2:
-            
-            col_idx, row = coefficients
-    
-            # Two cases for row...
-            if row.ndim == 1:
-                n = col_idx.shape[0]
+                is_numerical_sequence = self._isNumericalList(<list>coefficients)                    
                 
-                if row.shape[0] != n:
-                    raise LPSolveException("Length of index array (%d) must match number of coefficients (%d)."
-                                            % (col_idx.shape[0], row.shape[0]))
-
-                self.copyIntoIndices_shift(col_idx)
-                self._copy_into_real_buffer(row)
-                self._addSparseConstraintFromBuffer(n, constraint_id, rhs)
-
-            elif row.ndim == 2:
-
-                if col_idx.ndim == 1:
-                    n = col_idx.shape[0]
-
-                    if row.shape[1] != col_idx.shape[0]:
-                        raise LPSolveException("Length of index array (%d) must match number of coefficients (%d)."
-                                                % (col_idx.shape[0], row.shape[1]))
-
-                    self.copyIntoIndices_shift(col_idx)
-                    m = row.shape[0]
-                    bcast = self._ensure_rhs_is_1d_double(rhs, m)
-
-                    for i from 0 <= i < m:
-                        self._copy_into_real_buffer(row[i,:])
-                        self._addSparseConstraintFromBuffer(n, constraint_id, bcast[i])
-
-                elif col_idx.ndim == 2:
-                    n = col_idx.shape[1]
-
-                    if row.shape[1] != col_idx.shape[1]:
-                        raise LPSolveException("Length of index array (%d) must match number of coefficients (%d)."
-                                                % (col_idx.shape[1], row.shape[1]))
-
-                    
-                    m = row.shape[0]
-                    bcast = self._ensure_rhs_is_1d_double(rhs, m)
-
-                    for i from 0 <= i < m:
-                        self.copyIntoIndices_shift(col_idx[i,:])
-                        self._copy_into_real_buffer(row[i,:])
-                        self._addSparseConstraintFromBuffer(n, constraint_id, bcast[i])
-                else:
-                    raise LPSolveException("Column index array must be either 1d or 2d.")
-                    
+            if is_list_sequence:
+                return self._addConstraintTupleList(<list>coefficients, ctype, rhs)
+            elif is_numerical_sequence:
+                return self._addConstraintArray(None, coefficients, ctype, rhs)
             else:
-                raise LPSolveException("Coefficient matrix in sparse must be either 1d or 2d.")
+                raise TypeError("Coefficient list must be either list of scalars or list of 2-tuples.")
+
+        elif coefftype is dict:
+            return self._addConstraintDict(<dict>coefficients, ctype, rhs)
+
         else:
-            raise LPSolveException("coefficients argument must either be a 1d array, 2-tuple, or dict.")
+            raise TypeError("Type of coefficients not recognized; must be dict, list, 2-tuple, or array.")
 
 
-        
+    cdef _addConstraintArray(self, t_idx, t_val, str ctype, rhs):
+        # If the values can be interpreted as an array
+
+        cdef ar A = self._resolveValues(t_val, False)
+        cdef size_t i
+        cdef ar[double] rhs_a
+
+        if A.ndim == 1:
+            idx = self._resolveIdxBlock(t_idx, A.shape[0])
+            return self._addConstraint(idx, A, ctype, rhs)
+
+        elif A.ndim == 2:
+            idx = self._resolveIdxBlock(t_idx, A.shape[1])
+            
+            rhs_a = self._resolveValues(rhs, True)
+            
+            if rhs_a.shape[0] == 1:
+                return [self._addConstraint(idx, A[i,:], ctype, rhs_a[0])
+                        for 0 <= i < A.shape[0]]
+            elif rhs_a.shape[0] == A.shape[0]:
+                return [self._addConstraint(idx, A[i,:], ctype, rhs_a[i])
+                        for 0 <= i < A.shape[0]]
+            else:
+                raise ValueError("Length of right hand side in constraint must be either 1 or match the number of constraints given.")
+        else:
+            assert False
+
+    cdef _addConstraintDict(self, dict d, str ctype, rhs):
+        I, V = self._getArrayPairFromDict(d)
+        return self._addConstraint(I, V, ctype, rhs)
+            
+    cdef _addConstraintTupleList(self, list l, str ctype, rhs)
+        I, V = self._getArrayPairFromTupleList(l)
+        return self._addConstraint(I, V, ctype, rhs)
+
 
     ############################################################
-    # methods dealing with the objective function
+    # Functions dealing with the constraint
 
-    def clearObjective(self):
-        """
-        Clears the currnet objective function.  Because the 
+    cdef void _resetObjective(self):
+        # Resets the objective function; clearObjective does this and
+        # marks it as specified.
 
-        """
-        
+        self._obj_func_keys = []
         self._obj_func_values = []
-
-    cpdef setObjective(self, coefficients):
-        """
-        Sets the objective function.  
+        self._obj_func_n_vals_count = 0
+        self._obj_func_specified = False
         
-        `coefficients` may be either a single array, a dictionary, or
-        a 2-tuple with the form (index array, value array).  In the
-        case of a single array, it must be 1 dimensional and have the
-        same length as the number of columns in the lp.  If it is a
-        dictionary, the keys of the dictionary are the indices of the
-        non-zero values which are given by the corresponding values.
-        If it is a (index array, value array) pair, the corresponding
-        pairs have the same behavior.
+    cpdef clearObjective(self):
+        """
+        Clears the current objective function.  Note that if
+        setObjective() is called with `clear_previous = True`, this
+        function is implied.
+        """
+        
+        self._resetObjective()
+        self._obj_func_specified = True
+
+    def setObjective(self, coefficients, bint clear_previous=True):
+        """
+        Sets coefficients in the objective function.  
         """
 
-        cdef ar a
-        cdef ar idx
-        cdef dict d
-        cdef size_t n, i, k, s
-        cdef bint sizing_okay
+        # What we do depends on the type
+        coefftype = type(coefficients)
 
-        if isinstance(coefficients, ar):
-            a = coefficients
-            s = a.size
+        cdef tuple t
 
-            if a.ndim != 1:
-                
-                sizing_okay = False
-
-                for 0 <= i < a.ndim:
-                    if a.size == a.shape[i]:
-                        a = a.ravel()
-                        sizing_okay = True
-                        break
-
-                if not sizing_okay:
-                    raise LPSolveException("Only 1-d arrays are allowed for coefficients of objective function.")
-
-            self._check_full_sizing(a)
-            self._copy_into_real_buffer(a)
-
-            if set_obj_fn(self.lp, self.rbuf - 1) != 1:
-                raise LPSolveException("Error adding objective function.")
-
-        elif type(coefficients) is dict:
-            d = coefficients
-            n = len(d)
-
-            self._resize_real_buffer(n)
-            self._resize_int_buffer(n)
+        if coefftype is tuple:
+            t = <tuple>coefficients
             
-            i = 0
-            for k, v in d.iteritems():
-                self.intbuf[i] = k + 1
-                self.rbuf[i] = v
-                i += 1
+            # It's split into index, value pair
+            if len(t) != 2:
+                raise TypeError("coefficients should be either a single array, "
+                                "a dictionary, or a 2-tuple with (index block, values)")
 
-            if set_obj_fnex(self.lp, n, self.rbuf, self.intbuf) != 1:
-                raise LPSolveException("Error adding objective function.")
+            idx, val = t
 
-        elif (type(coefficients) is tuple or type(coefficients) is list) and len(coefficients) == 2:
+        elif coefftype is ndarray:
+            idx, val = None, coefficients
+
+        elif coefftype is list:
+            # Two possible ways to interpret a list; as a sequence of
+            # tuples or as a representation of an array; if it is a
+            # sequence of 2-tuples, intepret it this way 
             
-            idx, a = coefficients
-            n = idx.shape[0]
+            # Test and see if it's a list of sequences
+            is_list_sequence = self._isTupleList(<list>coefficients)
 
-            if idx.shape[0] != a.shape[0]:
-                raise LPSolveException("Index array and coefficient array do not have the same shape.")
+            # Test and see if it's a list of scalars
+            if is_list_sequence: 
+                is_numerical_sequence = False
+            else:
+                is_numerical_sequence = self._isNumericalList(<list>coefficients)
 
-            self._copy_into_real_buffer(a)
-            self.copyIntoIndices_shift(idx)
+            if is_list_sequence:
+                idx, val = self._getArrayPairFromTupleList(<list>coefficients)
+            elif is_numerical_sequence:
+                idx, val = None, array(<list>coefficients, dtype=npfloat)
+            else:
+                raise TypeError("Coefficient list must be either list of scalars or list of 2-tuples.")
+                    
+        elif coefftype is dict:
+            idx, val = self._getArrayPairFromDict(<dict>coefficients)
 
-            if set_obj_fnex(self.lp, n, self.rbuf, self.intbuf) != 1:
-                raise LPSolveException("Error adding objective function.")
         else:
-            raise LPSolveException("coefficients argument must either be a 1d array, 2-tuple, or dict.")
+            raise TypeError("Type of coefficients not recognized; must be dict, list, 2-tuple, or array.")
 
-
+        # Now that we've got the idx list and the values, run with it
+        if clear_previous:
+            self._resetObjective()
         
-    cdef _addConstraintDirect(self, ar row, int constraint_id, real rhs):
-    
-        self._check_full_sizing(row)
-        self._copy_into_real_buffer(row)
+        self._stackOnInterpretedKeyValuePair(
+            self._obj_func_keys, self._obj_func_values, idx, val, &self._obj_func_n_vals_count)
 
-        cdef double t = self._normalizeRealBuffer(row.shape[0])
+        self._obj_func_specified = True
+
+
+    cdef tuple _getCurrentObjectiveFunction(self):
+
+        cdef tuple t = self._getArrayPairFromKeyValuePair(
+            self._obj_func_keys, 
+            self._obj_func_values, 
+            self._obj_func_n_vals_count)
         
-        if add_constraint(self.lp, self.rbuf-1, constraint_id, rhs/t) != 1:
-            raise LPSolveException("Error adding constraint.")
-
-    cdef _addSparseConstraintFromBuffer(self, size_t n, int constraint_id, double rhs):
-        
-        cdef double t = self._normalizeRealBuffer(n)
-        
-        if add_constraintex(self.lp, n, self.rbuf, self.intbuf, constraint_id, rhs/t) != 1:
-            raise LPSolveException("Error adding constraint.")
-
-
-    cdef double _normalizeRealBuffer(self, size_t n):
-        cdef double t = 0
-        cdef size_t i
-        
-        for i from 0 <= i < n:  
-            t += abs(self.rbuf[i])
-        
-        t /= n
-
-        if t == 0:
-            return t
-
-        for i from 0 <= i < n:  
-            self.rbuf[i] /= t
+        self._resetObjective()
 
         return t
 
 
-    cdef ar _ensure_rhs_is_1d_double(self, rhs, size_t m):
+    ############################################################
+    # Methods dealing with variable bounds
 
-        cdef ar b
-
-        if type(rhs) is float or type(rhs) is int:
-            return ones(m)*rhs
-        elif not isinstance(rhs, ar):
-            raise LPSolveException("When coefficients is a 2d array, rhs must be corresponding 1d array or a scalar.")
-
-        b = rhs
-
-        if b.ndim != 1:
-            raise LPSolveException("Dimensions wrong on rhs array.")
-        if b.shape[0] != m:
-            raise LPSolveException("Size wrong on rhs array.") 
+    cpdef setUnbounded(self, var):
+        """
+        Sets the variable `var` to unbounded (default is >=0).  This
+        is equivalent to setLowerBound(None), setUpperBound(None)
+        """
         
-        return np.asarray(b, dtype=np.float)
+        setLowerBound(var, None)
+        setUpperBound(var, None)
 
-
-    cpdef setUnbounded(self, size_t idx):
+    cpdef setLowerBound(self, var, lb):
         """
-        Sets the variable `idx` to unbounded (default is positive).
-        """
-
-        set_unbounded(self.lp, idx + 1)
-
-
-    cpdef setLowerBound(self, size_t idx, lb):
-        """
-        Sets the lower bound of variable idx to lb.  If lb is None,
+        Sets the lower bound of variable(s) `var` to lb.  If lb is None,
         then it sets the lower bound to -Infinity.
+
+        `var` may be a single index, an array, list, or tuple of
+        indices, or the name of a block of indices.  If multiple
+        indices are specified, then lb may either be a scalar or a
+        vector of the same length as the number of indices.
         """
-        cdef real ub
+
+        self._setBound(var, lb, True)
+
+    cpdef setUpperBound(self, var, ub):
+        """
+        Sets the upper bound of variable idx to ub.  If ub is None,
+        then it sets the upper bound to Infinity.
+
+        `var` may be a single index, an array, list, or tuple of
+        indices, or the name of a block of indices.  If multiple
+        indices are specified, then ub may either be a scalar or a
+        vector of the same length as the number of indices.
+        """
+
+        self._setBound(var, ub, False)
         
-        if lb is None:  # free it
 
-            ub = get_upbo(self.lp, idx + 1)
+    cdef _setBound(self, var, b, bint lower_bound):
 
-            set_unbounded(self.lp, idx + 1)
-            
-            if ub != get_infinite(self.lp):
-                set_upbo(self.lp, idx + 1, ub)
+        cdef ar ba
+
+        if b is None:
+            idx = self._resolveIdxBlock(var, 1)
+            val = -infty if lower_bound else infty
+        elif type(b) is ndarray:
+            ba = b
+            if ba.ndim != 1:
+                raise TypeError("Bound specification must be either scalar or 1d array.")
+
+            idx = self._resolveIdxBlock(var, ba.shape[0])
+            val = b.copy()
+        elif isnumeric(b):
+            idx = self._resolveIdxBlock(var, 1)
+            val = b
+
+        if lower_bound:
+            self._stackOnInterpretedKeyValuePair(
+                self._lower_bound_keys, self._lower_bound_values, idx, val, &self._lower_bound_count)
         else:
-            set_lowbo(self.lp, idx + 1, <real?>lb)
+            self._stackOnInterpretedKeyValuePair(
+                self._upper_bound_keys, self._upper_bound_values, idx, val, &self._upper_bound_count)
+            
 
     cpdef setUpperBound(self, size_t idx, ub):
         """
@@ -683,22 +782,191 @@ cdef class LPSolve:
         else:
             set_upbo(self.lp, idx + 1, <real?>ub)
 
-    cpdef addingConstraints(self):
-        """
-        Turns on row-adding mode.
-        """
+
+    cdef applyVariableBounds(self):
         
-        set_add_rowmode(self.lp, True)
+        assert self.lp != NULL
+
+        cdef ar[uint_t, mode="c"] I
+        cdef ar[double, mode="c"] V
+               
+        # First the lower bounds; thus we can use set_unbounded on them
+        I, V = self._getArrayPairFromKeyValuePair(
+            self._lower_bound_keys, self._lower_bound_values, self._lower_bound_count)
+
+        cdef size_t i
+
+        for 0 <= i < I.shape[0]:
+            if V[i] == -infty:
+                set_unbounded(self.lp, I[i] + 1)
+            else:
+                set_lowbo(self.lp, I[i] + 1, V[i])
+
+        # Now set the lower bounds; this is trickier as set_unbounded
+        # undoes the lower bound
+
+        I, V = self._getArrayPairFromKeyValuePair(
+            self._lower_bound_keys, self._lower_bound_values, self._lower_bound_count)
+
+        cdef size_t i
+
+        cdef double lp_infty = get_infinite(self.lp)
+        cdef double lb
+
+        for 0 <= i < I.shape[0]:
+            if V[i] == infty:
+                lb = get_lowbo(self.lp, I[i] + 1)
+                set_unbounded(self.lp,  I[i] + 1)
+            
+                if lb != lp_infty:
+                    set_lowbo(self.lp,  I[i] + 1, lb)
+            else:
+                set_upbo(self.lp, I[i] + 1, V[i])
 
 
-    cpdef doneAddingConstraints(self):
-        """
-        Turns off row-adding mode
-        """
+    ############################################################
+    # Helper functions for turning dictionaries or tuple-lists into an
+    # index array + value array.
 
-        set_add_rowmode(self.lp, False)
+    cdef bint _isTupleList(self, list l):
+        for t in l:
+            if type(t) is not tuple or len(<tuple>t) != 2:
+                return False
+
+        return True
         
+    cdef bint _isNumericalList(self, list l):
+        for t in l:
+            if not isnumeric(t):
+                return False
 
+        return True
+       
+    cdef tuple _getArrayPairFromDict(self, dict d):
+        # Builds an array pair from a dictionary
+
+        cdef list key_buf = [], list val_buf = []
+        cdef size_t idx_count = 0
+
+        for k, v in d.iteritems():
+            self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count)
+
+        cdef ar I = empty(idx_count, dtype=uint)
+        cdef ar V = empty(idx_count, dtype=npfloat)
+
+        self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
+
+        return (I, V)
+
+
+    cdef tuple _getArrayPairFromList(self, list l):
+        # Builds an array pair from a dictionary
+
+        cdef list key_buf = [], list val_buf = []
+        cdef size_t idx_count = 0
+
+        for k, v in l:
+            self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count)
+
+        cdef ar I = empty(idx_count, dtype=uint)
+        cdef ar V = empty(idx_count, dtype=npfloat)
+
+        self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
+
+        return (I, V)
+
+    cdef tuple _getArrayPairFromKeyFaluePair(self, list key_buf, list val_buf, size_t idx_count):
+        cdef ar I = empty(idx_count, dtype=uint)
+        cdef ar V = empty(idx_count, dtype=npfloat)
+
+        self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
+        
+        return (I, V)
+    
+    cdef _stackOnInterpretedKeyValuePair(self, list key_buf, list val_buf, k, v, size_t *count):
+        # Appends interpreted key value pairs to the lists
+
+        cdef ar[size_t] tI
+        cdef ar[double] tV
+    
+        if isnumeric(k) and isnumeric(vo):
+            if (<size_t>k) != k:
+                raise ValueError("Could not interpret '%s' as nonegative index." % str(k))
+
+            key_buf.append(k)
+            val_buf.append(vo)
+            count[0] += 1
+
+        elif type(k) is str or type(k) is tuple:
+            tV = npfloat(self._resolveValues(vo, True))
+            tI = self._resolveIdxBlock(<str>k, tV.shape[0])
+            key_buf.append(tI)
+            val_buf.append(tV)
+
+            assert not tI is None
+
+            count[0] += tI.shape[0]
+
+        elif k is None:
+            tV = npfloat(self._resolveValues(vo, True))
+            tI = self._resolveIdxBlock(None, tV.shape[0])
+            
+            if tI is None: 
+                tI = arange(self.n_columns)
+                
+            val_buf.append(tV)
+            count[0] += tI.shape[0]
+
+        else:
+            raise TypeError("Error interpreting key/value pair as index/value pair.")
+
+
+    cdef _fillIndexValueArraysFromIntepretedStack(self, ar I_o, ar V_o, list key_buf, list val_buf):
+        
+        cdef ar[size_t, mode="c"] I = I_o
+        cdef ar[double, mode="c"] V = V_o
+
+        cdef ar[size_t] tI
+        cdef ar[double] vI
+        
+        cdef size_t i, j, ii = 0
+
+        assert len(key_buf) == len(val_buf)
+
+        for 0 <= i < len(key_buf):
+            k = key_buf[i]
+            v = val_buf[i]
+
+            if isnumeric(idx):
+                I[ii] = <size_t>k
+                V[ii] = <double>v
+                ii += 1
+            elif type(k) is ndarray:
+                tI = k
+                tV = v
+
+                if tI.shape[0] != 1 and tV.shape[0] == 1:
+                    for 0 <= j < tI.shape[0]:
+                        I[ii] = tI[j]
+                        V[ii] = tV[0]
+                        ii += 1
+                elif tI.shape[0] == tV.shape[0]:
+                    for 0 <= j < tI.shape[0]:
+                        I[ii] = tI[j]
+                        V[ii] = tV[j]
+                        ii += 1
+                else:
+                    assert False
+            else:
+                assert False
+            
+        assert ii == I.shape[0]
+
+
+
+    ############################################################
+    # Now stuff for solving the model
+        
     def solve(self, **options):
         """
         Solves the given model.  
@@ -712,6 +980,9 @@ cdef class LPSolve:
         saved basis from a previous call to getBasis(), on a solved
         model. 
         """
+
+        #set_add_rowmode(self.lp, True)
+        #set_add_rowmode(self.lp, False)
 
         cdef str k
 
@@ -856,7 +1127,7 @@ cdef class LPSolve:
 
         setupConstraint(cstr, row_idx, idx, row, ctypestr, rhs)
 
-    cdef addConstraint(self, ar idx, ar row, str ctypestr, rhs):
+    cdef _addConstraint(self, ar idx, ar row, str ctypestr, rhs):
         cdef size_t row_idx = self.n_rows
         self.setConstraint(row_idx, idx, row, ctypestr, rhs)
         return row_idx
@@ -892,7 +1163,7 @@ cdef class LPSolve:
 
             self.current_c_buffer_size = new_size
 
-        # Now make sure that buffer is ready
+        # Now make sure that the buffer is ready
         buf = self._c_buffer[buf_idx]
         
         if buf == NULL:
@@ -910,7 +1181,27 @@ cdef class LPSolve:
             self.n_rows = row_idx + 1
         
         return &buf[idx]
+
+    cdef applyAllConstraints(self):
+    
+        assert self.lp != NULL
+
+        cdef size_t i, j
+        cdef _Constraint *buf
+
+        # This enables the slicing to work properly
+        cdef ar[int, mode="c"] countrange = arange(self.n_columns)
+        cdef int* cr_ptr = <int*>countrange.data
+
+        for 0 <= i < self.current_c_buffer_size:
+            buf = self._c_buffer[i]
         
+            if buf == NULL:
+                continue
+
+            for 0 <= j < cStructBufferSize:
+                if inUse(buf[j]):
+                    setInLP(buf[j], self.lp, self.n_columns, cr_ptr)
 
     cdef void clearConstraintBuffers(self):
 
