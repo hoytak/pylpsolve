@@ -1,24 +1,16 @@
-from numpy cimport ndarray as ar, uint_t, float_t
+from numpy cimport ndarray as ar, \
+    int_t, uint_t, int32_t, uint32_t, int64_t, uint64_t, float_t
 
-from numpy import empty, ones, zeros, uint, arange, isscalar, amax, float as npfloat
-
-from constraintstruct cimport _Constraint, setupConstraint, \
-    setInLP, clearConstraint, isInUse
-
-import warnings
+from types cimport isnumeric, ecode, real
 
 cimport cython
 
-ctypedef double real
-ctypedef unsigned char ecode
 
+from numpy import int32,uint32,int64, uint64, float32, float64,\
+    uint, empty, ones, zeros, uint, arange, isscalar, amax, ndarray, array
+
+import warnings
 import optionlookup
-
-############################################################
-# An important check
-
-assert sizeof(uint_t) == sizeof(int)
-assert sizeof(float_t) == sizeof(double)
 
 ######################################################################
 # A few early binding things
@@ -29,52 +21,93 @@ cdef dict pricer_lookup   = optionlookup._pricer_lookup
 cdef dict pricer_flags    = optionlookup._pricer_flags
 
 cdef double infty = 1e30
+cdef tuple range_tuple_size = (1, 2)
+
+########################################
+# Set the proper types
+
+cdef object npfloat, npint
+
+if sizeof(double) == 8:
+    npfloat = float64
+else:
+    raise ImportError("Numpy type mismatch on double.")
+
+if sizeof(int) == 4:
+    npint = int32
+elif sizeof(int) == 8:
+    npint = int64
+else:
+    raise ImportError("Numpy type mismatch on int.")
+
 
 ######################################################################
-# LPSolve constants
+# Forward declarations
+
+cdef struct _Constraint
+
+######################################################################
+# Exceptions
+
+class LPSolveException(Exception): pass
+
+######################################################################
+# External imports
 
 cdef extern from "lpsolve/lp_lib.h":
     ctypedef void lprec
 
-    cdef:
-        lprec* make_lp(int rows, int cols)
-        void delete_lp(lprec*)
+    lprec* make_lp(int rows, int cols)
+    void delete_lp(lprec*)
 
-        ecode resize_lp(lprec *lp, int rows, int columns)
+    ecode resize_lp(lprec *lp, int rows, int columns)
 
-        ecode set_obj_fn(lprec*, real* row)
-        ecode set_obj_fnex(lprec*, int count, real*row, int *colno)
+    ecode set_obj_fn(lprec*, real* row)
+    ecode set_obj_fnex(lprec*, int count, real*row, int *colno)
 
-        ecode add_constraint(lprec*, real* row, int ctype, real rh)
-        ecode add_constraintex(lprec*, int count, real* row, int *colno, int ctype, real rh)
+    ecode add_constraint(lprec*, real* row, int ctype, real rh)
+    ecode add_constraintex(lprec*, int count, real* row, int *colno, int ctype, real rh)
 
-        ecode set_rowex(lprec *lp, int row_no, int count, real *row, int *colno)
-        ecode set_constr_type(lprec *lp, int row, int con_type)
-        ecode set_rh(lprec *lp, int row, real value)
-        ecode set_rh_range(lprec *lp, int row, real deltavalue)
+    ecode set_rowex(lprec *lp, int row_no, int count, real *row, int *colno)
+    ecode set_constr_type(lprec *lp, int row, int con_type)
+    ecode set_rh(lprec *lp, int row, real value)
+    ecode set_rh_range(lprec *lp, int row, real deltavalue)
 
-        ecode set_add_rowmode(lprec*, unsigned char turn_on)
-        
-        ecode set_lowbo(lprec*, int column, real value)
-        ecode set_upbo(lprec*, int column, real value)
-        real get_lowbo(lprec*, int column)
-        real get_upbo(lprec*, int column)
-        real get_infinite(lprec*)
-        ecode set_bounds(lprec*, int column, real lower, real upper)
-        ecode set_unbounded(lprec *lp, int column)
+    ecode set_add_rowmode(lprec*, unsigned char turn_on)
 
-        void set_presolve(lprec*, int do_presolve, int maxloops)
+    ecode set_lowbo(lprec*, int column, real value)
+    ecode set_upbo(lprec*, int column, real value)
+    real get_lowbo(lprec*, int column)
+    real get_upbo(lprec*, int column)
+    real get_infinite(lprec*)
+    ecode set_bounds(lprec*, int column, real lower, real upper)
+    ecode set_unbounded(lprec *lp, int column)
 
-        int get_Ncolumns(lprec*)
+    ecode set_rowex(lprec *lp, int row_no, int count, real *row, int *colno)
+    ecode set_row(lprec *lp, int row_no, real *row)
+    ecode set_constr_type(lprec *lp, int row, int con_type)
+    ecode set_rh(lprec *lp, int row, real value)
+    ecode set_rh_range(lprec *lp, int row, real deltavalue)
 
-        ecode get_variables(lprec*, real *var)
-        real get_objective(lprec*)
+    void set_presolve(lprec*, int do_presolve, int maxloops)
 
-        void set_pivoting(lprec*, int rule)
+    # Basis stuff
+    ecode guess_basis(lprec *lp, real *guessvector, int *basisvector)
+    ecode set_basis(lprec *lp, int *bascolumn, bint nonbasic)
 
-        int solve(lprec *lp)
-        
-        int print_lp(lprec *lp)
+    int get_Ncolumns(lprec*)
+
+    ecode get_ptr_variables(lprec*, real **var)
+    real get_objective(lprec*)
+
+    void set_pivoting(lprec*, int rule)
+    void set_sense(lprec *lp, bint maximize)
+    
+    int solve(lprec *lp)
+
+    int print_lp(lprec *lp)
+    
+    void set_verbose(lprec*, int)
 
 
 ############################################################
@@ -88,7 +121,6 @@ cdef extern from "Python.h":
 
 cdef extern from "stdlib.h":
     void memset(void *p, char value, size_t n)
-
 
 ################################################################################
 # Now the full class
@@ -131,6 +163,10 @@ cdef class LPSolve(object):
     cdef dict _named_index_blocks
     cdef bint _nonindexed_blocks_present, _user_warned_about_nonindexed_blocks
 
+    # Variables relating to post-solve aspects
+    cdef ar final_variables
+
+
     def __cinit__(self):
 
         self.lp = NULL
@@ -165,6 +201,8 @@ cdef class LPSolve(object):
         self._obj_func_n_vals_count = 0
 
         self.clearConstraintBuffers()
+
+        self.final_variables = None
 
         if not restartable_mode:  
             if self.lp != NULL:
@@ -325,6 +363,14 @@ cdef class LPSolve(object):
 
           price_truenorminit:	
             Use true norms for Devex and Steepest Edge initializations.
+
+        Other miscilaneous options::
+
+          verbosity:
+            Sets the verbosity level of printed information.  Default
+            is 1, which only prints errors; levels 1-5 are available,
+            with 6 being the most verbose.
+
         """
 
         cdef str n = name.lower()
@@ -338,29 +384,46 @@ cdef class LPSolve(object):
     ############################################################
     # Methods relating to variable indices
 
-    def getVariableIndexBlock(self, size_t size, str name = None):
+    def getVariableBlock(self, size_t size, str name = None):
         """
         Returns a new or current block of 'size' variable indices to
-        be used in the current LP.
+        be used in the current LP.  The return value is a 2-tuple,
+        ``(low_index, high_index)``, such that
+        ``high_index-low_index=size``  
         
         If `name` is not None, then other functions
         (e.g. addConstraint) can accept this accept this string as the
         index argument.
 
-        # Put in use cases
+        # Put in use cases 
+
+        # Blah
 
         """
         
-        self._getVariableIndexBlock(size, name)
-    
+        cdef ar[size_t, ndim=2, mode="c"] B = self._getVariableIndexBlock(size, name)
+        
+        assert B.shape[0] == 1
+        assert B.shape[1] == 2
+
+        return (B[0,0], B[0,1])
+
+    cdef ar _makeVarIdxRange(self, size_t lower, size_t upper):
+        cdef ar[size_t, ndim=2, mode="c"] B = empty(range_tuple_size, dtype=uint)
+        
+        B[0,0] = lower
+        B[0,1] = upper
+
+        return B
 
     cdef ar _getVariableIndexBlock(self, size_t size, str name):
         cdef ar idx
 
         if name is None:
-            idx = uint(arange(self.n_columns, self.n_columns + size))
+            idx = self._makeVarIdxRange(self.n_columns, self.n_columns + size)
             self.checkColumnCount(self.n_columns + size, True)
             return idx
+
         else:
             if name in self._named_index_blocks:
                 idx = self._named_index_blocks[name]
@@ -368,25 +431,12 @@ cdef class LPSolve(object):
                     raise ValueError("Requested size (%d) does not match previous size (%d) of index block '%s'"
                                      % (size, idx.shape[0], name))
                 return idx
+
             else:
-                idx = uint(arange(self.n_columns, self.n_columns + size))
+                idx = self._makeVarIdxRange(self.n_columns, self.n_columns + size)
                 self.checkColumnCount(self.n_columns + size, True)
                 self._named_index_blocks[name] = idx
                 return idx
-
-
-    def getVariableIndex(self, str name = None):
-        """
-        Returns a single unused index (unless name refers to a
-        previously named index).
-        """
-
-        if name is None:
-            ret_val = self.n_columns
-            self.checkColumnCount(self.n_columns + 1)
-            return ret_val
-        else:
-            return self.getVariableIndexBlock(1, name)[0]
 
 
     ########################################
@@ -398,7 +448,9 @@ cdef class LPSolve(object):
             return None
 
         cdef ar ar_idx
-        cdef long ar_idx
+        cdef long v_idx
+        cdef bint error = False
+        cdef tuple t
 
         if type(idx) is str:
             return self.getVariableIndexBlock(<str>idx, n)
@@ -411,11 +463,17 @@ cdef class LPSolve(object):
             if ar_idx.shape[0] not in (n, 1):
                 raise ValueError("Length of index array (%d) must equal length of values (%d) or 1." 
                                  % (ar_idx.shape[0], n))
+            self.checkColumnCount(amax(ar_idx), True)
+            return ar_idx.copy()  # Need to freeze the data
 
-            self.checkColumnCount(amax(ar_idx), False)
-            return ar_idx.copy()  # Need to own the data
+        elif type(idx) is tuple:
+            t = <tuple>idx
+            self._validateIndexTuple(t)
+            self.checkColumnCount(t[1], True)
+            
+            return self._makeVarIdxRange(<size_t>t[0], <size_t>t[1])
 
-        elif type(idx) is list or type(idx) is tuple:
+        elif type(idx) is list:
             try:
                 ar_idx = array(idx)
             except Exception, e:
@@ -427,21 +485,41 @@ cdef class LPSolve(object):
                 raise ValueError("Length of index list (%d) must equal length of values (%d) or 1." 
                                  % (ar_idx.shape[0], n))
             
-            self.checkColumnCount(amax(ar_idx), False)
+            self.checkColumnCount(amax(ar_idx), True)
             return ar_idx
 
         elif isnumeric(idx):
-            v_idx = <size_t>idx
-            if v_idx != idx:
+            v_idx = <long>idx
+            if v_idx < 0 or v_idx != idx:
                 raise ValueError("%s not valid as nonnegative index. " % str(idx))
 
-            self.checkColumnCount(v_idx)
+            self.checkColumnCount(v_idx, True)
             ar_idx = array([idx], dtype=uint)
             return ar_idx
 
         else:
             raise TypeError("Type of index (%s) not recognized; must be scalar, list, tuple, str, or array." % type(idx))
 
+    cdef _validateIndexTuple(self, tuple t):
+        cdef size_t v_idx, w_idx
+        cdef bint error = False
+    
+        if len(t) != 2: error = True
+
+        t1, t2 = t
+
+        if (not isnumeric(t1) or not isnumeric(t2)
+            or not ((<size_t>t1) != t1) or not ((<size_t>t2) != t2)):
+            error = True
+
+        v_idx, w_idx = t1, t2
+
+        if not w_idx > v_idx:
+            error = True
+
+        if error:
+            raise ValueError("Index tuples must be of form (lower_index, upper_index), with nonnegative indices.")
+    
 
     cdef ar _resolveValues(self, v, bint ensure_1d):
         cdef ar ret
@@ -599,7 +677,7 @@ cdef class LPSolve(object):
         I, V = self._getArrayPairFromDict(d)
         return self._addConstraint(I, V, ctype, rhs)
             
-    cdef _addConstraintTupleList(self, list l, str ctype, rhs)
+    cdef _addConstraintTupleList(self, list l, str ctype, rhs):
         I, V = self._getArrayPairFromTupleList(l)
         return self._addConstraint(I, V, ctype, rhs)
 
@@ -686,17 +764,21 @@ cdef class LPSolve(object):
         self._obj_func_specified = True
 
 
-    cdef tuple _getCurrentObjectiveFunction(self):
+    cdef applyObjective(self):
 
-        cdef tuple t = self._getArrayPairFromKeyValuePair(
+        assert self.lp != NULL
+
+        cdef ar[int, mode="c"]    I
+        cdef ar[double, mode="c"] V
+
+        I, V = self._getArrayPairFromKeyValuePair(
             self._obj_func_keys, 
             self._obj_func_values, 
             self._obj_func_n_vals_count)
         
         self._resetObjective()
 
-        return t
-
+        set_obj_fnex(self.lp, I.shape[0], <double*>V.data, <int*>I.data)
 
     ############################################################
     # Methods dealing with variable bounds
@@ -707,8 +789,8 @@ cdef class LPSolve(object):
         is equivalent to setLowerBound(None), setUpperBound(None)
         """
         
-        setLowerBound(var, None)
-        setUpperBound(var, None)
+        self.setLowerBound(var, None)
+        self.setUpperBound(var, None)
 
     cpdef setLowerBound(self, var, lb):
         """
@@ -763,26 +845,6 @@ cdef class LPSolve(object):
                 self._upper_bound_keys, self._upper_bound_values, idx, val, &self._upper_bound_count)
             
 
-    cpdef setUpperBound(self, size_t idx, ub):
-        """
-        Sets the upper bound of variable idx to ub.  If ub is None,
-        then it sets the upper bound to Infinity.
-        """
-
-        cdef real lb
-        
-        if ub is None:  # free it
-
-            lb = get_lowbo(self.lp, idx + 1)
-
-            set_unbounded(self.lp, idx + 1)
-            
-            if lb != get_infinite(self.lp):
-                set_lowbo(self.lp, idx + 1, lb)
-        else:
-            set_upbo(self.lp, idx + 1, <real?>ub)
-
-
     cdef applyVariableBounds(self):
         
         assert self.lp != NULL
@@ -802,24 +864,22 @@ cdef class LPSolve(object):
             else:
                 set_lowbo(self.lp, I[i] + 1, V[i])
 
-        # Now set the lower bounds; this is trickier as set_unbounded
+        # Now set the upper bounds; this is trickier as set_unbounded
         # undoes the lower bound
 
         I, V = self._getArrayPairFromKeyValuePair(
             self._lower_bound_keys, self._lower_bound_values, self._lower_bound_count)
 
-        cdef size_t i
-
         cdef double lp_infty = get_infinite(self.lp)
-        cdef double lb
+        cdef double ub
 
         for 0 <= i < I.shape[0]:
             if V[i] == infty:
-                lb = get_lowbo(self.lp, I[i] + 1)
+                ub = get_upbo(self.lp, I[i] + 1)
                 set_unbounded(self.lp,  I[i] + 1)
             
-                if lb != lp_infty:
-                    set_lowbo(self.lp,  I[i] + 1, lb)
+                if ub != lp_infty:
+                    set_upbo(self.lp,  I[i] + 1, ub)
             else:
                 set_upbo(self.lp, I[i] + 1, V[i])
 
@@ -845,7 +905,7 @@ cdef class LPSolve(object):
     cdef tuple _getArrayPairFromDict(self, dict d):
         # Builds an array pair from a dictionary
 
-        cdef list key_buf = [], list val_buf = []
+        cdef list key_buf = [], val_buf = []
         cdef size_t idx_count = 0
 
         for k, v in d.iteritems():
@@ -862,7 +922,7 @@ cdef class LPSolve(object):
     cdef tuple _getArrayPairFromList(self, list l):
         # Builds an array pair from a dictionary
 
-        cdef list key_buf = [], list val_buf = []
+        cdef list key_buf = [], val_buf = []
         cdef size_t idx_count = 0
 
         for k, v in l:
@@ -889,16 +949,16 @@ cdef class LPSolve(object):
         cdef ar[size_t] tI
         cdef ar[double] tV
     
-        if isnumeric(k) and isnumeric(vo):
+        if isnumeric(k) and isnumeric(v):
             if (<size_t>k) != k:
                 raise ValueError("Could not interpret '%s' as nonegative index." % str(k))
 
             key_buf.append(k)
-            val_buf.append(vo)
+            val_buf.append(v)
             count[0] += 1
 
         elif type(k) is str or type(k) is tuple:
-            tV = npfloat(self._resolveValues(vo, True))
+            tV = npfloat(self._resolveValues(v, True))
             tI = self._resolveIdxBlock(<str>k, tV.shape[0])
             key_buf.append(tI)
             val_buf.append(tV)
@@ -908,7 +968,7 @@ cdef class LPSolve(object):
             count[0] += tI.shape[0]
 
         elif k is None:
-            tV = npfloat(self._resolveValues(vo, True))
+            tV = npfloat(self._resolveValues(v, True))
             tI = self._resolveIdxBlock(None, tV.shape[0])
             
             if tI is None: 
@@ -927,7 +987,7 @@ cdef class LPSolve(object):
         cdef ar[double, mode="c"] V = V_o
 
         cdef ar[size_t] tI
-        cdef ar[double] vI
+        cdef ar[double] tV
         
         cdef size_t i, j, ii = 0
 
@@ -937,7 +997,7 @@ cdef class LPSolve(object):
             k = key_buf[i]
             v = val_buf[i]
 
-            if isnumeric(idx):
+            if isnumeric(k):
                 I[ii] = <size_t>k
                 V[ii] = <double>v
                 ii += 1
@@ -967,63 +1027,241 @@ cdef class LPSolve(object):
     ############################################################
     # Now stuff for solving the model
         
-    def solve(self, **options):
+    def solve(self, mode = "minimize", **options):
         """
-        Solves the given model.  
+        Solves the given model.  `mode` may be either "minimize"
+        (default) or "maximize".
 
+        Configuration
+        ========================================
+        
+        Any of the options available to `setOption()` may also be
+        passed in as keyword arguments.  These affect only the current
+        run (as opposed to `setOption()`, which affects all subsequent
+        runs of `solve()`).
 
-        Basis options
-        ==================================================
+        Additional keyword options, unique to `solve()`, are::
 
-        To initialize the model with a specific basis, pass ``basis =
-        <ndarray>`` as one of the arguments.  The basis must be a
-        saved basis from a previous call to getBasis(), on a solved
-        model. 
+          basis:
+            Initialize the LP with the given basis.  This must be an
+            array of integers of size ``1 + num_columns`` or ``1 +
+            num_columns + num_rows`` from a previous run of the LP.
+            Use `getBasis()` to retrieve the basis after a given run.
+            This can speed up the time to find a solution
+            substantially.
+
+          guess:
+            Initialize the LP with guessed starting values of the
+            variables.  This must be an array of length
+            ``num_columns`` and should be a feasible solution given
+            the constraints.
+
+            The LP is initialized by first constructing a basis given
+            the guessed variable values, then initializing it with
+            that basis.  If both basis and guess are given as options,
+            guess is ignored. 
+
+            Note that if the parameter 'error_on_bad_guess' is True,
+            an exception is raised if the guess fails.  The default is
+            False, which causes a warning to be generated.
+        
         """
 
         #set_add_rowmode(self.lp, True)
         #set_add_rowmode(self.lp, False)
-
-        cdef str k
-
-        # Get the current options dict
-        cdef dict option_dict = self.getOptions()
-
-        for k, v in options.iteritems():
-            option_dict[k.lower()] = v
-
-        # Set any flags having to do with the presolve
-        cdef unsigned long n
-        cdef unsigned long presolve = 0
-
-        for k, n in _presolve_flags.iteritems():
-            if k in option_dict and option_dict[k]:
-                presolve += n
         
-        set_presolve(self.lp, presolve, 100)
+        
+        ########################################
+        # Set up the LP
 
-        # Set any flags having to do with the pricing
-        if "pricer" in option_dict:
+        if self.lp == NULL:
+            self.lp = make_lp(self.n_rows, self.n_columns)
+
+            if self.lp == NULL:
+                raise MemoryError("Out of memory creating internal LP structure.")
+        else:
+            if not resize_lp(self.lp, self.n_rows, self.n_columns):
+                raise MemoryError("Out of memory resizing internal LP structure.")
             
+        ####################
+        # Abort on bad options
+
+        cdef dict option_dict
+        cdef set okay_options
+
+        cdef str k, k1
+        cdef unsigned long n, presolve
+
+        cdef int pricer_option 
+
+        # Stuff for the basis setting
+        cdef ar b, g
+        cdef ar[int, mode="c"] start_basis 
+        cdef ar[double, mode="c"] guess_vect 
+
+        cdef size_t full_basis_size
+        cdef size_t basic_basis_size
+
+        try:
+            ########################################
+            # Get the current options dict
+
+            option_dict = self.getOptions()
+
+            # Make sure that the options given are all valid
+            okay_options = set(option_dict.iterkeys())
+            okay_options |= set(["basis", "guess"])
+
+            for k, v in options.iteritems():
+                kl = k.lower()
+
+                if kl not in okay_options:
+                    raise ValueError("Option '%s' not recognized." % k)
+
+                option_dict[kl] = v
+
+            ########################################
+            # Go through and configure things depending on the options
+
+            ####################
+            # Presolve
+            presolve = 0
+
+            for k, n in presolve_flags.iteritems():
+                if option_dict[k]:
+                    presolve += n
+
+            set_presolve(self.lp, presolve, 100)
+
+            ####################
+            # Pricing
             pricer = option_dict["pricer"].lower()
 
-            if type(pricer) is not str or pricer not in _pricer_lookup:
+            if type(pricer) is not str or pricer not in pricer_lookup:
                 raise ValueError("pricer option must be one of %s."
-                                 % (','.join(["'%s'" % p for p in _pricer_lookup.iterkeys()])))
-        else:
-            pricer = "devex"
+                                 % (','.join(["'%s'" % p for p in pricer_lookup.iterkeys()])))
+
+            pricer_option = pricer_lookup[pricer]
+
+            # Now see if there are other flags in this mix
+            for k, n in pricer_flags.iteritems():
+                if option_dict[k]:
+                    pricer_option += n
+
+            set_pivoting(self.lp, pricer_option)
+
+            ####################
+            # Verbosity
+
+            set_verbose(self.lp, option_dict["verbosity"])
+
+            ####################
+            # Set the minimize / maximize mode
             
-        cdef int pricer_option = _pricer_lookup[pricer]
+            if mode.lower() not in ["maximize", "minimize"]:
+                raise ValueError("mode parameter must be either maximize or minimize.")
 
-        # Now see if there are other flags in this mix
-        for k, n in _pricer_flags.iteritems():
-            if k in option_dict and option_dict[k]:
-                pricer_option += n
+            set_sense(self.lp, mode.lower() == "maximize")
 
-        set_pivoting(self.lp, pricer_option)
+            ####################
+            # Constraints
+
+            self.applyAllConstraints()
+
+            ####################
+            # Variable Bounds
+
+            self.applyVariableBounds()
+
+            ####################
+            # Objective
+
+            self.applyObjective()
+
+
+            ####################
+            # Set the basis/guess
+
+            start_basis = None
+            guess_vect = None
+
+            full_basis_size  = 1 + self.n_columns + self.n_rows
+            basic_basis_size = 1 + self.n_columns
+
+            # possibly set the start basis
+            if "basis" in option_dict:
+                basis = option_dict["basis"]
+
+                if type(basis) is ndarray:
+                    b = basis
+                elif type(basis) is list:
+                    b = array(basis)
+                else:
+                    raise TypeError("Basis must be either ndarray or list.")
+
+
+                if b.ndim != 1 or b.shape[0] not in [full_basis_size, basic_basis_size]:
+                    raise ValueError("Basis must be 1d array of length 1 + num_columns or 1 + num_columns+ num_rows")
+
+                if b.dtype != npint:
+                    warnings.warn("Basis not an integer array/list, converting.")
+                    start_basis = npint(b)
+                else:
+                    start_basis = b.ravel()
+                
+            elif "guess" in option_dict:
+                guess = option_dict["guess"]
+                
+                if type(guess) is ndarray:
+                    g = guess
+                elif type(guess) is list:
+                    g = array(guess)
+                else:
+                    raise TypeError("Guess must be either 1d ndarray or list.")
+                
+                if g.ndim != 1 or g.shape[0] != self.n_columns:
+                    raise ValueError("Guess must be 1d array of length num_columns.")
+
+                guess_vect = (npfloat(g)).ravel()
+
+                # Now try to create the basis
+                start_basis = empty(full_basis_size, dtype=npfloat)
+
+                if not guess_basis(self.lp, <double*>guess_vect.data, <int*>start_basis.data):
+                    
+                    error_msg = "Finding starting basis from guess vector failed; discarding."
+                    
+                    if option_dict["error_on_bad_guess"]:
+                        raise LPSolveException(error_msg)
+                    else:
+                        warnings.warn(error_msg)
+                    
+                    start_basis = None
+
+            # Now set the starting basis if it's not None, i.e. one of
+            # the previous versions succeeded
+
+            if start_basis is not None:
+                assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
+
+                set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
+
+        except Exception, e:
+            delete_lp(self.lp)
+            self.lp = NULL
+            raise e    
+
+        ####################
+        # Clear out all the temporary stuff 
+
+        self._clear(True)
 
         cdef int ret = solve(self.lp)
+
         
+        ########################################
+        # Check the error codes
+
         if ret == 0:
             return
         elif ret == -2:
@@ -1082,35 +1320,96 @@ cdef class LPSolve(object):
              # NOFEASFOUND (13) 	No feasible B&B solution found
             raise LPSolveException("Error 13: No feasible B&B solution found")
 
+        # And we're done
+        
 
-    cpdef ar getFinalVariables(self):
+
+    cpdef ar getSolution(self, indices = None):
         """
         Returns the final values of the variables in the constraints.
+
+        The following are valid values of `indices`:
+
+          None (default):
+            Retrieves the full array of final variables.
+
+          Variable block name:
+            Retrieves an array of the values in the given block.
+
+          List or array of indices:
+            Retrieves the values corresponding to the given indices.
+
+          2-tuple:
+            The 2-tuple must specify the (low, high) bounds of a
+            variable block; this block is returned.
+
+          Scalar index:
+            Returns a single value corresponding to the specified index.
         """
 
-        cdef size_t n = get_Ncolumns(self.lp)
+        if self.lp == NULL:
+            raise LPSolveException("Final variables available only after solve() is called.")
 
-        self._resize_real_buffer(n)
+        cdef bint fill_mode = False
 
-        if not get_variables(self.lp, self.rbuf):
-            raise LPSolveException("Error retrieving final variables")
-        
-        cdef ar[double, mode="c"] v = empty(n)
+        if self.final_variables is None:
+            fill_mode = True
+            self.final_variables = empty(self.n_columns, dtype=npfloat)
+
+            
+        cdef ar[float_t, mode="c"] fv = self.final_variables
+        cdef real *fv_ptr
         cdef size_t i
-        
-        for i from 0 <= i < n:
-            v[i] = self.rbuf[i]
 
-        return v
+        if fill_mode:
+            get_ptr_variables(self.lp, &fv_ptr)
+            
+            for 0 <= i < self.n_columns:
+                fv[i] = fv_ptr[i]
+
+        # Okay, now we've got it
+
+        cdef tuple t
+        cdef ar[size_t, ndim=2, mode="c"] idx_bounds
+
+        if indices is None:
+            return fv.copy()
+        elif type(indices) is str:
+            try:
+                idx_bounds = self._named_index_blocks[indices]
+            except KeyError:
+                raise ValueError("Variable block '%s' not defined." % indices)
+                
+            return fv[idx_bounds[0,0]:idx_bounds[0,1]]
+        elif type(indices) is list or type(indices) is array:
+            # May raise an exception
+            return fv[indices]
+        elif type(indices) is tuple:
+            t = indices
+            self._validateIndexTuple(t)
+            return fv[t[0]:t[1]]
+        elif isnumeric(indices):
+            return fv[indices]
+        else:
+            raise ValueError("Type of `indices` argument not recognized.")
 
     cpdef real getObjectiveValue(self):
         """
         Returns the value of the objective function of the LP.
         """
 
+        if self.lp == NULL:
+            raise LPSolveException("Final variables available only after solve() is called.")
+
         return get_objective(self.lp)
 
+    
+
     cpdef print_lp(self):
+
+        if self.lp == NULL:
+            raise LPSolveException("Final variables available only after solve() is called.")
+
         print_lp(self.lp)
 
 
@@ -1153,7 +1452,7 @@ cdef class LPSolve(object):
             if self._c_buffer == NULL:
                 self._c_buffer = <_Constraint**>malloc(new_size*sizeof(_Constraint*))
             else:
-                self._c_buffer = <_Constraint**>realloc(self._c_buffer, new*sizeof(_Constraint*))
+                self._c_buffer = <_Constraint**>realloc(self._c_buffer, new_size*sizeof(_Constraint*))
             
             if self._c_buffer == NULL:
                 return NULL  
@@ -1168,7 +1467,7 @@ cdef class LPSolve(object):
         
         if buf == NULL:
             buf = self._c_buffer[buf_idx] = \
-                malloc(cStructBufferSize*sizeof(_Constraint))
+                <_Constraint*>malloc(cStructBufferSize*sizeof(_Constraint))
             
             if buf == NULL:
                 return NULL
@@ -1200,8 +1499,8 @@ cdef class LPSolve(object):
                 continue
 
             for 0 <= j < cStructBufferSize:
-                if inUse(buf[j]):
-                    setInLP(buf[j], self.lp, self.n_columns, cr_ptr)
+                if inUse(&buf[j]):
+                    setInLP(&buf[j], self.lp, self.n_columns, cr_ptr)
 
     cdef void clearConstraintBuffers(self):
 
@@ -1228,3 +1527,319 @@ cdef class LPSolve(object):
         
         self.current_c_buffer_size = 0
         self._c_buffer = NULL
+
+
+################################################################################
+# Stuff to handle the constraints
+################################################################################
+
+# Defines a constraint struct that allows for buffered adding of
+# constraints.  This shields the user from many of the lower-level
+# considerations with lp_solve
+
+
+############################################################
+# Constraint types
+
+DEF constraint_free    = 0
+DEF constraint_leq     = 1
+DEF constraint_geq     = 2
+DEF constraint_equal   = 3
+DEF constraint_in      = 4
+
+cdef list _constraint_type_list = [
+    ("<"      , constraint_leq),
+    ("<="     , constraint_leq),
+    ("=<"     , constraint_leq),
+    ("leq"    , constraint_leq),
+    ("lt"     , constraint_leq),
+    (">"      , constraint_geq),
+    (">="     , constraint_geq),
+    ("=>"     , constraint_geq),
+    ("geq"    , constraint_geq),
+    ("gt"     , constraint_geq),
+    ("="      , constraint_equal),
+    ("=="     , constraint_equal),
+    ("eq"     , constraint_equal),
+    ("equal"  , constraint_equal),
+    ("in"     , constraint_in),
+    ("between", constraint_in),
+    ("range"  , constraint_in)]
+
+cdef dict _constraint_map = dict(_constraint_type_list)
+cdef str _valid_constraint_identifiers = \
+    ','.join(["'%s'" % cid for cid,ct in _constraint_type_list])
+
+
+cdef inline getCType(str ctypestr):
+    try:
+        return _constraint_map[ctypestr]
+    except KeyError:
+        raise ValueError("Constraint type '%s' not recognized." % ctypestr)
+
+######################################################################
+# Now functions and a struct dealing with the constraints
+
+cdef struct _Constraint:
+    # Dealing with the indices; if index_range_mode is true, then the
+    # indices refer to a range rather than individual indices
+    int *indices
+    int index_range_start  # the first index of the length n block
+                           # that is the indices. Negative -> not
+                           # used.
+
+    # The values
+    double *values
+
+    # The total size
+    size_t n
+    int ctype
+    double rhs1, rhs2
+    size_t row_idx
+
+########################################
+# Methods to deal with this constraint
+
+cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, str ctypestr, rhs):
+
+    # see if we need to clear things
+    if cstr.n != 0:
+        clearConstraint(cstr)
+
+    ########################################
+    # Check possible bad configurations of ctype, rhs
+    cstr.ctype = getCType(ctypestr)
+
+    if cstr.ctype in [constraint_leq, constraint_geq, constraint_equal]:
+        if not isnumeric(rhs):
+            raise TypeError("Constraint type '%s' requires right hand side to be scalar." % ctypestr)
+
+        cstr.rhs1 = <double>rhs
+    elif cstr.ctype == constraint_in:
+        if type(rhs) is tuple and len(<tuple>rhs) == 2:
+            cstr.rhs1, cstr.rhs2 = (<tuple>rhs)
+        elif type(rhs) is list and len(<list>rhs) == 2:
+            cstr.rhs1, cstr.rhs2 = (<list>rhs)
+        else:
+            raise TypeError("Constraint type '%s' requires right hand side to be either 2-tuple or 2-list." % ctypestr)
+    else:
+        assert False
+
+    ############################################################
+    # Set the row indices
+    cstr.row_idx = row_idx
+    
+    ########################################
+    # Now that these tests pass, copy all the values in.
+
+    cdef bint fill_mode = False
+    cdef double fill_value = 0
+
+    # Initializing stuff having to deal with the range indexing
+    cdef bint idx_range_mode = False
+    cdef int il, iu
+    cstr.index_range_start = -1  # indicating not used
+
+    # Determine the size
+    if idx is not None:
+
+        if idx.ndim == 1:
+            if idx.shape[0] != 1 and row.shape[0] == 1:
+                cstr.n = idx.shape[0]
+                fill_mode = True
+                fill_value = row[0]
+            elif idx.shape[0] == row.shape[0]:
+                cstr.n = idx.shape[0]
+            else:
+                assert False
+        elif idx.ndim == 2:  
+            # this means it defines a range instead of individual values
+            assert idx.shape[0] == 1
+            assert idx.shape[1] == 2
+
+            il = idx[0,0]
+            iu = idx[0,1]
+            assert iu > il
+
+            cstr.n = iu - il
+            cstr.index_range_start = il + 1  # for 1-based counting of indices
+            idx_range_mode = True
+        else:
+            assert False
+
+    else:
+        cstr.n = row.shape[0]
+
+    # Set the indices
+    if idx is None or idx_range_mode:
+        cstr.indices = NULL
+    else:
+        cstr.indices = <int *> malloc((cstr.n+1)*sizeof(int))
+
+        if cstr.indices == NULL:
+            raise MemoryError
+
+        copyIntoIndices(cstr, idx)
+
+    # Set the values
+    cstr.values = <double*> malloc((cstr.n+1)*sizeof(double))
+
+    if cstr.values == NULL:
+        raise MemoryError
+
+    if fill_mode:
+        fillValues(cstr, fill_value)
+    else:
+        copyIntoValues(cstr, row)
+
+
+############################################################
+# Reliably copying in the indices and values; need to handle all the
+# possible types.  For values, it's npfloat.  For the others, any
+# integer should work.
+
+
+########################################
+# Values
+
+cdef inline copyIntoValues(_Constraint* cstr, ar a_o):
+
+    cdef size_t i
+    cdef ar[float_t] a = a_o
+
+    with cython.boundscheck(False):
+        for 0 <= i < a.shape[0]:
+            cstr.values[i+1] = a[i]
+
+cdef inline void fillValues(_Constraint* cstr, double v):
+
+    cdef size_t i
+
+    for 1 <= i <= cstr.n:
+        cstr.values[i] = v
+
+########################################
+# Now handling the index buffer
+
+cdef inline copyIntoIndices(_Constraint* cstr, ar a):
+
+    dt = a.dtype
+    if dt is int32:      copyIntoIndices_int32(cstr, a)
+    elif dt is uint32:   copyIntoIndices_uint32(cstr, a)
+    elif dt is int64:    copyIntoIndices_int64(cstr, a)
+    elif dt is uint64:   copyIntoIndices_uint64(cstr, a)
+    else:                
+        if sizeof(int) == 4:
+            ua = uint32(a)
+            if not (ua == a).all():
+                raise TypeError("Error converting index array to 32bit integers.")
+
+            copyIntoIndices_uint32(cstr, ua)
+        else:
+            ua = uint64(a)
+            if not (ua == a).all():
+                raise TypeError("Error converting index array to 64bit integers.")
+
+            copyIntoIndices_uint64(cstr, ua)
+            
+cdef inline copyIntoIndices_int32(_Constraint *cstr, ar a_o):
+
+    cdef ar[int32_t] a = a_o
+    cdef size_t i
+
+    with cython.boundscheck(False):
+        for 0 <= i < a.shape[0]:
+            cstr.indices[i+1] = a[i] + 1
+
+cdef inline copyIntoIndices_uint32(_Constraint *cstr, ar a_o):
+
+    cdef ar[uint32_t] a = a_o
+    cdef size_t i
+
+    with cython.boundscheck(False):
+        for 0 <= i < a.shape[0]:
+            cstr.indices[i+1] = a[i] + 1
+
+cdef inline copyIntoIndices_int64(_Constraint *cstr, ar a_o):
+
+    cdef ar[int64_t] a = a_o
+    cdef size_t i
+
+    with cython.boundscheck(False):
+        for 0 <= i < a.shape[0]:
+            cstr.indices[i+1] = a[i] + 1
+
+cdef inline copyIntoIndices_uint64(_Constraint *cstr, ar a_o):
+
+    cdef ar[uint64_t] a = a_o
+    cdef size_t i
+
+    with cython.boundscheck(False):
+        for 0 <= i < a.shape[0]:
+            cstr.indices[i+1] = a[i] + 1
+
+############################################################
+# Now the routines to add this to the model
+
+cdef inline setInLP(_Constraint *cstr, lprec* lp, size_t n_cols, int *countrange):
+
+    if cstr.n == 0:
+        return
+
+    # Ensure that the columns and all are sized up correctly
+    if cstr.indices == NULL and cstr.n != n_cols:
+        _setIndicesToRange(cstr)
+
+    # Vanila constraint
+    if cstr.ctype in [constraint_leq, constraint_geq, constraint_equal]:
+        _setRow(cstr, lp, cstr.ctype, cstr.rhs1, countrange)
+
+    # range constraint
+    elif cstr.ctype == constraint_in:
+
+        if cstr.rhs1 < cstr.rhs2:
+            _setRow(cstr, lp, constraint_leq, cstr.rhs2, countrange)
+            set_rh_range(lp,  cstr.row_idx+1, cstr.rhs2 - cstr.rhs1)
+
+        elif cstr.rhs1 > cstr.rhs2:
+            _setRow(cstr, lp, constraint_leq, cstr.rhs1, countrange)
+            set_rh_range(lp,  cstr.row_idx+1, cstr.rhs1 - cstr.rhs2)
+
+        else:
+            _setRow(cstr, lp, constraint_equal, cstr.rhs1, countrange)
+    else:
+        assert False  # no silent fail
+
+
+cdef inline _setRow(_Constraint *cstr, lprec *lp, int ctype, double rhs, int *countrange):
+
+    # Need to accommidate the start-at-1 indexing
+    if cstr.indices == NULL:
+        if cstr.index_range_start != -1:
+            set_rowex(lp, cstr.row_idx+1, cstr.n, cstr.values+1, &countrange[cstr.index_range_start-1] )
+        else:
+            set_row(lp, cstr.row_idx+1, cstr.values)
+    else:
+        set_rowex(lp, cstr.row_idx+1, cstr.n, cstr.values+1, cstr.indices+1)
+
+    set_constr_type(lp, cstr.row_idx+1, ctype)
+    set_rh(lp, cstr.row_idx+1, rhs)
+
+
+cdef inline _setIndicesToRange(_Constraint *cstr):
+    cdef size_t i
+
+    # all we need to do now that we're using range based indexing
+    cstr.index_range_start = 1
+
+
+cdef inline void clearConstraint(_Constraint *cstr):
+    if cstr.indices != NULL: free(cstr.indices)
+    if cstr.values  != NULL: free(cstr.indices)
+    
+    cstr.indices = NULL
+    cstr.values = NULL
+    cstr.n = 0
+
+cdef inline bint inUse(_Constraint *cstr):
+    return (cstr.n != 0)

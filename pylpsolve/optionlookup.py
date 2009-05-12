@@ -39,7 +39,8 @@ _default_options = {
     "price_truenorminit"   :  False,
 
     # Bookkeeping stuff
-    "verbosity"            :  1       # Lowest
+    "verbosity"            :  1,       # Lowest
+    "error_on_bad_guess"   :  False
 }
 
      
@@ -86,3 +87,4 @@ _pricer_flags = {
     "price_harristwopass"  : 4096,
     "price_truenorminit"   : 16384}
 
+# need to add in scaling options

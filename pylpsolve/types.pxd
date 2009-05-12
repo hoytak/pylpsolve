@@ -1,4 +1,8 @@
 from types import IntType, LongType, FloatType
+from numpy import isscalar
+
+ctypedef unsigned char ecode
+ctypedef double real
 
 ############################################################
 # Miscilaneous utility functions for resolving types
