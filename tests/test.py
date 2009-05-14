@@ -1,31 +1,3 @@
-#!/usr/bin/env python
-
-# Copyright (c) 2009, Hoyt Koepke (hoytak@gmail.com)
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#     - Redistributions of source code must retain the above copyright
-#       notice, this list of conditions and the following disclaimer.
-#     - Redistributions in binary form must reproduce the above copyright
-#       notice, this list of conditions and the following disclaimer in the
-#       documentation and/or other materials provided with the distribution.
-#     - Neither the name of the <organization> nor the
-#       names of its contributors may be used to endorse or promote products
-#       derived from this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY <copyright holder> ''AS IS'' AND ANY
-# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL <copyright holder> BE LIABLE FOR ANY
-# DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
 from pylpsolve import LPSolve, LPSolveException
@@ -33,16 +5,161 @@ from numpy import ndarray as ar, ones, eye
 
 class TestLPProblem(unittest.TestCase):
 
-    def test01_simple(self):
-        lp = LPSolve(2,2)
+    def test01_basic(self):
+        # test singleton
+        
+        lp = LPSolve()
 
-        lp.setObjective(-ones(2))
-        lp.addConstraint(eye(2), '<', 1)
+        lp.addConstraint( [1], ">", 1)
+        lp.setObjective( [1], mode = "minimize")
 
         lp.solve()
+
+        self.assert_(lp.getObjectiveValue() == 1)
+
+        v = lp.getSolution()
+
+        self.assert_(len(v) == 1)
+        self.assert_(v[0] == 1)
+
+
+    # Test retrieval of blocks
+    def test02_blocks_01(self):
+        lp = LPSolve()
+
+        self.assert_(lp.getVariables(2, "a1") == (0,2))
+
+    # Test retrieval of blocks
+    def test02_blocks_01_r(self):
+        lp = LPSolve()
+
+        self.assert_(lp.getVariables("a1", 2) == (0,2))
+
+    def test02_blocks_02(self):
+        lp = LPSolve()
+
+        self.assert_(lp.getVariables(2, "a1") == (0,2))
+        self.assert_(lp.getVariables(4, "a2") == (2,6))
+        self.assert_(lp.getVariables("a1") == (0,2))
+
+    def test02_blocks_02_reverse_order(self):
+        lp = LPSolve()
+
+        self.assert_(lp.getVariables("a1", 2) == (0,2))
+        self.assert_(lp.getVariables("a2", 4) == (2,6))
+        self.assert_(lp.getVariables("a1", 2) == (0,2))
+
+    def test02_blocks_02_reverse_order_mixed(self):
+        lp = LPSolve()
+
+        self.assert_(lp.getVariables("a1", 2) == (0,2))
+        self.assert_(lp.getVariables(4, "a2") == (2,6))
+        self.assert_(lp.getVariables("a1", 2) == (0,2))
+
+    def test02_blocks_03_bad_recall(self):
+        lp = LPSolve()
+
+        self.assert_(lp.getVariables(2, "a1") == (0,2))
+        self.assert_(lp.getVariables(4, "a2") == (2,6))
+        self.assertRaises(ValueError, lambda: lp.getVariables(3, "a1"))
+
+    def test02_blocks_04_bad_size_01(self):
+        lp = LPSolve()
         
-        self.assert_(lp.getObjectiveValue() == -2)
-        self.assert_(all(lp.getFinalVariables() == ones(2)))
+        self.assertRaises(ValueError, lambda: lp.getVariables("a1", 0))
+
+    def test02_blocks_04_bad_size_02(self):
+        lp = LPSolve()
+        
+        self.assertRaises(ValueError, lambda: lp.getVariables("a1", 0.5))
+
+    def test02_blocks_04_bad_size_03(self):
+        lp = LPSolve()
+        
+        self.assertRaises(ValueError, lambda: lp.getVariables("a1", -1))
+
+    def test02_blocks_04_bad_size_04(self):
+        lp = LPSolve()
+        
+        self.assertRaises(ValueError, lambda: lp.getVariables("a1", "a2"))
+
+    def test02_blocks_04_bad_size_05(self):
+        lp = LPSolve()
+        
+        self.assertRaises(ValueError, lambda: lp.getVariables(0, 2))
+
+
+    # test constraint adding by (name, value array)
+    #def test03_constraints_01_explicit_blocks(self):
+    #    lp = LPSolve()
+
+    #b1 = lp.getVariables(1, "a1")
+    #    b2 = lp.
+        
+
+    # test constraint adding by (index array, value array)
+    # test constraint adding by (index array, wrong typed value array)
+    # test constraint adding by (wrong typed index array, value array)
+    # test constraint adding by (index array, list)
+    # test constraint adding by (name, list)
+    # test constraint adding by (tuple, list)
+    # test constraint adding absolute array
+    # test constraint adding absolute list
+    # test constraint adding absolute array of wrong types
+    # test constraint adding absolute array of double types
+    # test constraint adding by list of tuples
+    # test constraint adding by dict
+    # test constraint adding by dict with tuples:vectors
+    # test constraint adding by dict with names:vectors
+    # test constraint adding by dict with tuples:scalars
+
+    # test constraint adding by dict with names:scalars, names
+    # previously defined
+
+    # test constraint adding by dict with tuples:scalars, names
+    # previously defined
+
+    # test constraint adding by dict with tuples:scalars, names
+    # not previously defined
+
+    # test constraint adding with a 2d array with scalar b
+    # test constraint adding with a 2d array with vector b
+    # test constraint adding with a list of 1d arrays with scalar b
+    # test constraint adding with a list of 1d arrays with vector b
+    # test constraint adding with a list of lists with scalar b
+    # test constraint adding with a list of lists with vector b
+
+    # test constraint adding with a tuple + 2d array with scalar b
+    # test constraint adding with a tuple + 2d array with vector b
+    # test constraint adding with a tuple + list of 1d arrays with scalar b
+    # test constraint adding with a tuple + list of 1d arrays with vector b
+    # test constraint adding with a tuple + list of lists with scalar b
+    # test constraint adding with a tuple + list of lists with vector b
+
+    # test constraint adding with a name + 2d array with scalar b
+    # test constraint adding with a name + 2d array with vector b
+    # test constraint adding with a name + list of 1d arrays with scalar b
+    # test constraint adding with a name + list of 1d arrays with vector b
+    # test constraint adding with a name + list of lists with scalar b
+    # test constraint adding with a name + list of lists with vector b
+
+    # test constraint adding with scalar multiple on previously
+    # defined variable group
+        
+    # test constraint adding with scalar multiple with tuple indexing
+    # on group that's not previously defined.
+
+    # test that running twice gives same answer
+
+    # test that running with maximize, then minimize works with no
+    # other changes
+
+    # test that guesses work
+
+    
+    
+
+
 
 if __name__ == '__main__':
     unittest.main()

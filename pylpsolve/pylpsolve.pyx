@@ -1,13 +1,10 @@
 from numpy cimport ndarray as ar, \
     int_t, uint_t, int32_t, uint32_t, int64_t, uint64_t, float_t
 
-from types cimport isnumeric, ecode, real
-
 cimport cython
 
-
 from numpy import int32,uint32,int64, uint64, float32, float64,\
-    uint, empty, ones, zeros, uint, arange, isscalar, amax, ndarray, array
+    uint, empty, ones, zeros, uint, arange, isscalar, amax, ndarray, array, asarray
 
 import warnings
 import optionlookup
@@ -26,7 +23,7 @@ cdef tuple range_tuple_size = (1, 2)
 ########################################
 # Set the proper types
 
-cdef object npfloat, npint
+cdef object npfloat, npint, npuint
 
 if sizeof(double) == 8:
     npfloat = float64
@@ -39,6 +36,44 @@ elif sizeof(int) == 8:
     npint = int64
 else:
     raise ImportError("Numpy type mismatch on int.")
+
+if sizeof(size_t) == 4:
+    npuint = uint32
+elif sizeof(size_t) == 8:
+    npuint = uint64
+else:
+    raise ImportError("Numpy type mismatch on size_t.")
+
+from types import IntType, LongType, FloatType
+from numpy import isscalar
+
+ctypedef unsigned char ecode
+ctypedef double real
+
+############################################################
+# Miscilaneous utility functions for resolving types
+
+cdef inline bint isnumeric(v):
+    t_v = type(v)
+    
+    if (t_v is IntType
+        or t_v is LongType
+        or t_v is FloatType):
+        return True
+    else:
+        return isscalar(v)
+
+cdef inline bint isposint(v):
+    t_v = type(v)
+
+    if (t_v is IntType or t_v is LongType) and v >= 0:
+        return True
+
+cdef inline bint issize(v):
+    t_v = type(v)
+
+    if (t_v is IntType or t_v is LongType) and v >= 1:
+        return True
 
 
 ######################################################################
@@ -158,6 +193,7 @@ cdef class LPSolve(object):
     cdef list _obj_func_values
     cdef bint _obj_func_specified
     cdef size_t _obj_func_n_vals_count 
+    cdef bint _maximize_mode, _mode_set
 
     # Methods relating to named variable group
     cdef dict _named_index_blocks
@@ -199,6 +235,8 @@ cdef class LPSolve(object):
         self._obj_func_values = []
         self._obj_func_specified = False
         self._obj_func_n_vals_count = 0
+        self._mode_set = False
+        self._maximize_mode = False
 
         self.clearConstraintBuffers()
 
@@ -384,7 +422,7 @@ cdef class LPSolve(object):
     ############################################################
     # Methods relating to variable indices
 
-    def getVariableBlock(self, size_t size, str name = None):
+    def getVariables(self, a1, a2 = None):
         """
         Returns a new or current block of 'size' variable indices to
         be used in the current LP.  The return value is a 2-tuple,
@@ -401,15 +439,42 @@ cdef class LPSolve(object):
 
         """
         
-        cdef ar[size_t, ndim=2, mode="c"] B = self._getVariableIndexBlock(size, name)
-        
+        cdef str name
+        cdef size_t size
+
+        cdef ar[size_t, ndim=2, mode="c"] B 
+
+        if a2 is None:
+            if type(a1) is str:
+                name = <str>a1
+
+                if name not in self._named_index_blocks:
+                    raise ValueError("Block '%s' must be declared with size on first call." % name)
+
+                B = self._getVariableIndexBlock(0, name)
+            elif issize(a1):
+                B = self._getVariableIndexBlock(<size_t>a1, None)
+            else:
+                raise ValueError("First argument must either be name of variable block or size (>= 1) of new block.")
+        else:
+            if type(a2) is str and issize(a1):
+                name = a2
+                size = a1
+            elif type(a1) is str and issize(a2):
+                name = a1
+                size = a2
+            else:
+                raise ValueError("getVariables() arguments must be a block name/size, size, or name of prexisting block.")
+
+            B = self._getVariableIndexBlock(size, name)
+            
         assert B.shape[0] == 1
         assert B.shape[1] == 2
 
         return (B[0,0], B[0,1])
 
     cdef ar _makeVarIdxRange(self, size_t lower, size_t upper):
-        cdef ar[size_t, ndim=2, mode="c"] B = empty(range_tuple_size, dtype=uint)
+        cdef ar[size_t, ndim=2, mode="c"] B = empty(range_tuple_size, npuint)
         
         B[0,0] = lower
         B[0,1] = upper
@@ -417,9 +482,14 @@ cdef class LPSolve(object):
         return B
 
     cdef ar _getVariableIndexBlock(self, size_t size, str name):
-        cdef ar idx
+        # size = 0 denotes no checking
+    
+        cdef ar[size_t, ndim=2,mode="c"] idx
 
         if name is None:
+            if size == 0:
+                raise ValueError("Size of variable block must be >= 1")
+
             idx = self._makeVarIdxRange(self.n_columns, self.n_columns + size)
             self.checkColumnCount(self.n_columns + size, True)
             return idx
@@ -427,12 +497,15 @@ cdef class LPSolve(object):
         else:
             if name in self._named_index_blocks:
                 idx = self._named_index_blocks[name]
-                if idx.shape[0] != size:
+                if size != 0 and idx[0,1] - idx[0,0] != size:
                     raise ValueError("Requested size (%d) does not match previous size (%d) of index block '%s'"
-                                     % (size, idx.shape[0], name))
+                                     % (size, idx[0,1] - idx[0,0], name))
                 return idx
 
             else:
+                if size == 0:
+                    raise ValueError("Size of variable block must be >= 1")
+
                 idx = self._makeVarIdxRange(self.n_columns, self.n_columns + size)
                 self.checkColumnCount(self.n_columns + size, True)
                 self._named_index_blocks[name] = idx
@@ -453,7 +526,7 @@ cdef class LPSolve(object):
         cdef tuple t
 
         if type(idx) is str:
-            return self.getVariableIndexBlock(<str>idx, n)
+            return self._getVariableIndexBlock(<str>idx, n)
 
         elif type(idx) is ndarray:
             ar_idx = idx
@@ -494,7 +567,8 @@ cdef class LPSolve(object):
                 raise ValueError("%s not valid as nonnegative index. " % str(idx))
 
             self.checkColumnCount(v_idx, True)
-            ar_idx = array([idx], dtype=uint)
+            ar_idx = empty(idx, npint)
+            ar_idx[0] = idx
             return ar_idx
 
         else:
@@ -524,12 +598,11 @@ cdef class LPSolve(object):
     cdef ar _resolveValues(self, v, bint ensure_1d):
         cdef ar ret
 
-        if type(v) is ndarray:
-            ret = npfloat(v)
-        elif type(v) is list or type(v) is tuple:
-            ret = array(v, dtype=npfloat)
+        if type(v) is ndarray or type(v) is list or type(v) is tuple: 
+            ret = asarray(v, npfloat)
         elif isnumeric(v):
-            ret = array([v],dtype=npfloat)
+            ret = empty(1, npfloat)
+            ret[0] = v
         else:
             raise TypeError("Type of values (%s) not recognized." % str(type(v)))
 
@@ -558,14 +631,16 @@ cdef class LPSolve(object):
 
             self.n_columns = requested_size
 
-        if indexed:
+        if not indexed:
             self._nonindexed_blocks_present = True
 
 
     cdef _warnAboutNonindexedBlocks(self):
         if not self._user_warned_about_nonindexed_blocks:
-            warnings.warn("Non-indexed variable block present which does not span columns; "
-                          "setting to lowest-indexed columns.")
+            #warnings.warn("Non-indexed variable block present which does not span columns; "
+            #              "setting to lowest-indexed columns.")
+            raise Exception("Non-indexed variable block present which does not span columns; "
+                            "setting to lowest-indexed columns.")
             self._user_warned_about_nonindexed_blocks = True
             
 
@@ -704,7 +779,7 @@ cdef class LPSolve(object):
         self._resetObjective()
         self._obj_func_specified = True
 
-    def setObjective(self, coefficients, bint clear_previous=True):
+    def setObjective(self, coefficients, bint clear_previous=True, str mode = "minimize"):
         """
         Sets coefficients in the objective function.  
         """
@@ -744,7 +819,7 @@ cdef class LPSolve(object):
             if is_list_sequence:
                 idx, val = self._getArrayPairFromTupleList(<list>coefficients)
             elif is_numerical_sequence:
-                idx, val = None, array(<list>coefficients, dtype=npfloat)
+                idx, val = None, array(<list>coefficients, npfloat)
             else:
                 raise TypeError("Coefficient list must be either list of scalars or list of 2-tuples.")
                     
@@ -758,6 +833,8 @@ cdef class LPSolve(object):
         if clear_previous:
             self._resetObjective()
         
+        # debug note: at this point val is ndarray
+
         self._stackOnInterpretedKeyValuePair(
             self._obj_func_keys, self._obj_func_values, idx, val, &self._obj_func_n_vals_count)
 
@@ -777,6 +854,9 @@ cdef class LPSolve(object):
             self._obj_func_n_vals_count)
         
         self._resetObjective()
+        
+        
+        I += 1 # necessary for the weird shift
 
         set_obj_fnex(self.lp, I.shape[0], <double*>V.data, <int*>I.data)
 
@@ -849,7 +929,7 @@ cdef class LPSolve(object):
         
         assert self.lp != NULL
 
-        cdef ar[uint_t, mode="c"] I
+        cdef ar[int, mode="c"] I
         cdef ar[double, mode="c"] V
                
         # First the lower bounds; thus we can use set_unbounded on them
@@ -911,8 +991,8 @@ cdef class LPSolve(object):
         for k, v in d.iteritems():
             self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count)
 
-        cdef ar I = empty(idx_count, dtype=uint)
-        cdef ar V = empty(idx_count, dtype=npfloat)
+        cdef ar I = empty(idx_count, npint)
+        cdef ar V = empty(idx_count, npfloat)
 
         self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
 
@@ -928,16 +1008,16 @@ cdef class LPSolve(object):
         for k, v in l:
             self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count)
 
-        cdef ar I = empty(idx_count, dtype=uint)
-        cdef ar V = empty(idx_count, dtype=npfloat)
+        cdef ar I = empty(idx_count, npint)
+        cdef ar V = empty(idx_count, npfloat)
 
         self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
 
         return (I, V)
 
-    cdef tuple _getArrayPairFromKeyFaluePair(self, list key_buf, list val_buf, size_t idx_count):
-        cdef ar I = empty(idx_count, dtype=uint)
-        cdef ar V = empty(idx_count, dtype=npfloat)
+    cdef tuple _getArrayPairFromKeyValuePair(self, list key_buf, list val_buf, size_t idx_count):
+        cdef ar I = empty(idx_count, npint)
+        cdef ar V = empty(idx_count, npfloat)
 
         self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
         
@@ -946,8 +1026,9 @@ cdef class LPSolve(object):
     cdef _stackOnInterpretedKeyValuePair(self, list key_buf, list val_buf, k, v, size_t *count):
         # Appends interpreted key value pairs to the lists
 
-        cdef ar[size_t] tI
+        cdef ar[int]    tI
         cdef ar[double] tV
+        cdef size_t i
     
         if isnumeric(k) and isnumeric(v):
             if (<size_t>k) != k:
@@ -958,7 +1039,7 @@ cdef class LPSolve(object):
             count[0] += 1
 
         elif type(k) is str or type(k) is tuple:
-            tV = npfloat(self._resolveValues(v, True))
+            tV = self._resolveValues(v, True)
             tI = self._resolveIdxBlock(<str>k, tV.shape[0])
             key_buf.append(tI)
             val_buf.append(tV)
@@ -968,30 +1049,36 @@ cdef class LPSolve(object):
             count[0] += tI.shape[0]
 
         elif k is None:
-            tV = npfloat(self._resolveValues(v, True))
+            tV = self._resolveValues(v, True)
             tI = self._resolveIdxBlock(None, tV.shape[0])
             
-            if tI is None: 
-                tI = arange(self.n_columns)
+            if tI is None:
+                tI = empty(self.n_columns, npint)
+                for 0 <= i < self.n_columns: tI[i] = i
                 
+            key_buf.append(tI)
             val_buf.append(tV)
             count[0] += tI.shape[0]
 
         else:
             raise TypeError("Error interpreting key/value pair as index/value pair.")
 
+        assert len(key_buf) == len(val_buf), "k:%d != v:%d" % (len(key_buf), len(val_buf))
+
 
     cdef _fillIndexValueArraysFromIntepretedStack(self, ar I_o, ar V_o, list key_buf, list val_buf):
         
-        cdef ar[size_t, mode="c"] I = I_o
+        cdef ar[int, mode="c"] I = I_o
         cdef ar[double, mode="c"] V = V_o
 
-        cdef ar[size_t] tI
+        cdef ar[int] tI
         cdef ar[double] tV
         
-        cdef size_t i, j, ii = 0
+        cdef size_t i, j
 
-        assert len(key_buf) == len(val_buf)
+        assert len(key_buf) == len(val_buf), "k:%d != v:%d" % (len(key_buf), len(val_buf))
+
+        cdef size_t ii = 0
 
         for 0 <= i < len(key_buf):
             k = key_buf[i]
@@ -1225,7 +1312,7 @@ cdef class LPSolve(object):
                 guess_vect = (npfloat(g)).ravel()
 
                 # Now try to create the basis
-                start_basis = empty(full_basis_size, dtype=npfloat)
+                start_basis = empty(full_basis_size, npfloat)
 
                 if not guess_basis(self.lp, <double*>guess_vect.data, <int*>start_basis.data):
                     
@@ -1245,11 +1332,13 @@ cdef class LPSolve(object):
                 assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
 
                 set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
+        finally:
+            pass
 
-        except Exception, e:
-            delete_lp(self.lp)
-            self.lp = NULL
-            raise e    
+        #except Exception, e:
+        #    delete_lp(self.lp)
+        #    self.lp = NULL
+        #    raise e
 
         ####################
         # Clear out all the temporary stuff 
@@ -1257,7 +1346,6 @@ cdef class LPSolve(object):
         self._clear(True)
 
         cdef int ret = solve(self.lp)
-
         
         ########################################
         # Check the error codes
@@ -1354,7 +1442,7 @@ cdef class LPSolve(object):
 
         if self.final_variables is None:
             fill_mode = True
-            self.final_variables = empty(self.n_columns, dtype=npfloat)
+            self.final_variables = empty(self.n_columns, npfloat)
 
             
         cdef ar[float_t, mode="c"] fv = self.final_variables
@@ -1402,8 +1490,6 @@ cdef class LPSolve(object):
             raise LPSolveException("Final variables available only after solve() is called.")
 
         return get_objective(self.lp)
-
-    
 
     cpdef print_lp(self):
 
@@ -1457,8 +1543,8 @@ cdef class LPSolve(object):
             if self._c_buffer == NULL:
                 return NULL  
 
-            memset(&self._c_buffer[self.current_c_buffer_size-1], 0,
-                    (buf_idx - self.current_c_buffer_size)*sizeof(_Constraint*))
+            memset(&self._c_buffer[self.current_c_buffer_size], 0,
+                    (new_size - self.current_c_buffer_size)*sizeof(_Constraint*))
 
             self.current_c_buffer_size = new_size
 
@@ -1475,7 +1561,6 @@ cdef class LPSolve(object):
             memset(buf, 0, cStructBufferSize*sizeof(_Constraint))
 
         # Now finally this determines the new model size
-
         if row_idx >= self.n_rows:
             self.n_rows = row_idx + 1
         
@@ -1674,7 +1759,7 @@ cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, s
     if idx is None or idx_range_mode:
         cstr.indices = NULL
     else:
-        cstr.indices = <int *> malloc((cstr.n+1)*sizeof(int))
+        cstr.indices = <int*> malloc((cstr.n+1)*sizeof(int))
 
         if cstr.indices == NULL:
             raise MemoryError
