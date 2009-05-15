@@ -148,10 +148,15 @@ cdef extern from "lpsolve/lp_lib.h":
 ############################################################
 # Structs for buffering the constraints
 
-cdef extern from "Python.h":
-    void* malloc "PyMem_Malloc"(size_t n)
-    void* realloc "PyMem_Realloc"(void *p, size_t n)
-    void free "PyMem_Free"(void *p)
+#cdef extern from "Python.h":
+#    void* malloc "PyMem_Malloc"(size_t n)
+#    void* realloc "PyMem_Realloc"(void *p, size_t n)
+#    void free "PyMem_Free"(void *p)
+
+cdef extern from "stdlib.h":
+    void* malloc(size_t n)
+    void* realloc(void *p, size_t n)
+    void free(void *p)
 
 
 cdef extern from "stdlib.h":
@@ -526,17 +531,21 @@ cdef class LPSolve(object):
         cdef tuple t
 
         if type(idx) is str:
-            return self._getVariableIndexBlock(<str>idx, n)
+            return self._getVariableIndexBlock(n, <str>idx)
 
         elif type(idx) is ndarray:
             ar_idx = idx
 
             if ar_idx.ndim != 1:
                 raise ValueError("Index array must be 1d vector.")
-            if ar_idx.shape[0] not in (n, 1):
+
+            if ar_idx.shape[0] not in [n, 1]:
+                print ar_idx
+
                 raise ValueError("Length of index array (%d) must equal length of values (%d) or 1." 
                                  % (ar_idx.shape[0], n))
-            self.checkColumnCount(amax(ar_idx), True)
+
+            self.checkColumnCount(amax(ar_idx) + 1, True)
             return ar_idx.copy()  # Need to freeze the data
 
         elif type(idx) is tuple:
@@ -558,7 +567,7 @@ cdef class LPSolve(object):
                 raise ValueError("Length of index list (%d) must equal length of values (%d) or 1." 
                                  % (ar_idx.shape[0], n))
             
-            self.checkColumnCount(amax(ar_idx), True)
+            self.checkColumnCount(amax(ar_idx) + 1, True)
             return ar_idx
 
         elif isnumeric(idx):
@@ -621,6 +630,9 @@ cdef class LPSolve(object):
     # Bookkeeping for the column counts
 
     cdef checkColumnCount(self, size_t requested_size, bint indexed):
+
+        print "checking column count = ", requested_size
+
         if requested_size < self.n_columns:
             if not indexed:
                 self._warnAboutNonindexedBlocks()
@@ -681,12 +693,17 @@ cdef class LPSolve(object):
         coefftype = type(coefficients)
 
         if coefftype is tuple:
+
+            print coefficients
+
             t_coeff = <tuple>coefficients
 
             # Make sure it's split into index, value pair
             if len(t_coeff) != 2:
                 raise TypeError("coefficients should be either a single array, "
                                 "a dictionary, or a 2-tuple with (index block, values)")
+
+            print "t_coeff: ", t_coeff
 
             return self._addConstraintArray(t_coeff[0], t_coeff[1], ctype, rhs)
 
@@ -724,11 +741,15 @@ cdef class LPSolve(object):
     cdef _addConstraintArray(self, t_idx, t_val, str ctype, rhs):
         # If the values can be interpreted as an array
 
+        print "t_idx = ", t_idx
+        print "t_val = ", t_val
+
         cdef ar A = self._resolveValues(t_val, False)
         cdef size_t i
         cdef ar[double] rhs_a
 
         if A.ndim == 1:
+            print "741:", A
             idx = self._resolveIdxBlock(t_idx, A.shape[0])
             return self._addConstraint(idx, A, ctype, rhs)
 
@@ -855,8 +876,9 @@ cdef class LPSolve(object):
         
         self._resetObjective()
         
-        
-        I += 1 # necessary for the weird shift
+        # necessary for the weird start-at-1 indexing
+        cdef size_t i 
+        for 0 <= i < I.shape[0]: I[i] += 1
 
         set_obj_fnex(self.lp, I.shape[0], <double*>V.data, <int*>I.data)
 
@@ -998,7 +1020,6 @@ cdef class LPSolve(object):
 
         return (I, V)
 
-
     cdef tuple _getArrayPairFromList(self, list l):
         # Builds an array pair from a dictionary
 
@@ -1026,10 +1047,11 @@ cdef class LPSolve(object):
     cdef _stackOnInterpretedKeyValuePair(self, list key_buf, list val_buf, k, v, size_t *count):
         # Appends interpreted key value pairs to the lists
 
-        cdef ar[int]    tI
+        cdef ar[int] tI1d
+        cdef ar tI
         cdef ar[double] tV
         cdef size_t i
-    
+
         if isnumeric(k) and isnumeric(v):
             if (<size_t>k) != k:
                 raise ValueError("Could not interpret '%s' as nonegative index." % str(k))
@@ -1038,27 +1060,41 @@ cdef class LPSolve(object):
             val_buf.append(v)
             count[0] += 1
 
-        elif type(k) is str or type(k) is tuple:
+        elif (type(k) is str or type(k) is tuple 
+              or type(k) is list or type(k) is ndarray):
+
             tV = self._resolveValues(v, True)
-            tI = self._resolveIdxBlock(<str>k, tV.shape[0])
+            tI = self._resolveIdxBlock(k, tV.shape[0])
             key_buf.append(tI)
             val_buf.append(tV)
 
             assert not tI is None
 
-            count[0] += tI.shape[0]
+            if tI.ndim == 1:
+                count[0] += tI.shape[0]
+            elif tI.ndim == 2:
+                count[0] += tI[0,1] - tI[0,0]
 
         elif k is None:
             tV = self._resolveValues(v, True)
             tI = self._resolveIdxBlock(None, tV.shape[0])
             
             if tI is None:
-                tI = empty(self.n_columns, npint)
-                for 0 <= i < self.n_columns: tI[i] = i
-                
-            key_buf.append(tI)
+                tI1d = empty(self.n_columns, npint)
+                for 0 <= i < self.n_columns: tI1d[i] = i
+                key_buf.append(tI1d)
+
+                count[0] += self.n_columns
+
+            else:
+                key_buf.append(tI)
+
+                if tI.ndim == 1:
+                    count[0] += tI.shape[0]
+                elif tI.ndim == 2:
+                    count[0] += tI[0,1] - tI[0,0]
+
             val_buf.append(tV)
-            count[0] += tI.shape[0]
 
         else:
             raise TypeError("Error interpreting key/value pair as index/value pair.")
@@ -1074,7 +1110,9 @@ cdef class LPSolve(object):
         cdef ar[int] tI
         cdef ar[double] tV
         
-        cdef size_t i, j
+        cdef ar[size_t, ndim=2, mode="c"] B
+
+        cdef size_t i, j, d
 
         assert len(key_buf) == len(val_buf), "k:%d != v:%d" % (len(key_buf), len(val_buf))
 
@@ -1088,19 +1126,37 @@ cdef class LPSolve(object):
                 I[ii] = <size_t>k
                 V[ii] = <double>v
                 ii += 1
-            elif type(k) is ndarray:
-                tI = k
-                tV = v
 
-                if tI.shape[0] != 1 and tV.shape[0] == 1:
-                    for 0 <= j < tI.shape[0]:
-                        I[ii] = tI[j]
-                        V[ii] = tV[0]
-                        ii += 1
-                elif tI.shape[0] == tV.shape[0]:
-                    for 0 <= j < tI.shape[0]:
-                        I[ii] = tI[j]
-                        V[ii] = tV[j]
+            elif type(k) is ndarray:
+                
+                d = (<ar>k).ndim
+                
+                if k.ndim == 1:
+
+                    tI = <ar>k
+                    tV = <ar>v
+
+                    if tI.shape[0] != 1 and tV.shape[0] == 1:
+                        for 0 <= j < tI.shape[0]:
+                            I[ii] = tI[j]
+                            V[ii] = tV[0]
+                            ii += 1
+                    elif tI.shape[0] == tV.shape[0]:
+                        for 0 <= j < tI.shape[0]:
+                            I[ii] = tI[j]
+                            V[ii] = tV[j]
+                            ii += 1
+                    else:
+                        assert False
+                elif k.ndim == 2:
+                    B = <ar>k
+                    tV = <ar>v
+                    
+                    assert tV.shape[0] == (B[0,1] - B[0,0])
+
+                    for 0 <= i < tV.shape[0]:
+                        I[ii] = B[0,1] + i
+                        V[ii] = tV[i]
                         ii += 1
                 else:
                     assert False
@@ -1345,6 +1401,8 @@ cdef class LPSolve(object):
 
         self._clear(True)
 
+        self.print_lp()
+
         cdef int ret = solve(self.lp)
         
         ########################################
@@ -1512,6 +1570,7 @@ cdef class LPSolve(object):
 
         setupConstraint(cstr, row_idx, idx, row, ctypestr, rhs)
 
+
     cdef _addConstraint(self, ar idx, ar row, str ctypestr, rhs):
         cdef size_t row_idx = self.n_rows
         self.setConstraint(row_idx, idx, row, ctypestr, rhs)
@@ -1556,7 +1615,7 @@ cdef class LPSolve(object):
                 <_Constraint*>malloc(cStructBufferSize*sizeof(_Constraint))
             
             if buf == NULL:
-                return NULL
+                raise MemoryError
 
             memset(buf, 0, cStructBufferSize*sizeof(_Constraint))
 
@@ -1596,7 +1655,7 @@ cdef class LPSolve(object):
             return
 
         for 0 <= i < self.current_c_buffer_size:
-            
+
             buf = self._c_buffer[i]
             
             if buf == NULL:
@@ -1688,8 +1747,9 @@ cdef struct _Constraint:
 cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, str ctypestr, rhs):
 
     # see if we need to clear things
-    if cstr.n != 0:
-        clearConstraint(cstr)
+    assert cstr.n == 0
+    assert cstr.indices == NULL
+    assert cstr.values == NULL
 
     ########################################
     # Check possible bad configurations of ctype, rhs
@@ -1920,7 +1980,7 @@ cdef inline _setIndicesToRange(_Constraint *cstr):
 
 cdef inline void clearConstraint(_Constraint *cstr):
     if cstr.indices != NULL: free(cstr.indices)
-    if cstr.values  != NULL: free(cstr.indices)
+    if cstr.values  != NULL: free(cstr.values)
     
     cstr.indices = NULL
     cstr.values = NULL

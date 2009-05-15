@@ -5,24 +5,6 @@ from numpy import ndarray as ar, ones, eye
 
 class TestLPProblem(unittest.TestCase):
 
-    def test01_basic(self):
-        # test singleton
-        
-        lp = LPSolve()
-
-        lp.addConstraint( [1], ">", 1)
-        lp.setObjective( [1], mode = "minimize")
-
-        lp.solve()
-
-        self.assert_(lp.getObjectiveValue() == 1)
-
-        v = lp.getSolution()
-
-        self.assert_(len(v) == 1)
-        self.assert_(v[0] == 1)
-
-
     # Test retrieval of blocks
     def test02_blocks_01(self):
         lp = LPSolve()
@@ -89,9 +71,13 @@ class TestLPProblem(unittest.TestCase):
         self.assertRaises(ValueError, lambda: lp.getVariables(0, 2))
 
 
+
+
     # test constraint adding by (name, value array)
-    #def test03_constraints_01_explicit_blocks(self):
-    #    lp = LPSolve()
+    def test03_constraints_01_explicit_blocks(self):
+        lp = LPSolve()
+
+        
 
     #b1 = lp.getVariables(1, "a1")
     #    b2 = lp.
