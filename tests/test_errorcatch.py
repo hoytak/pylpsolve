@@ -467,5 +467,222 @@ class TestErrorCatch(unittest.TestCase):
     def testBadSizingTooSmall_Tffo(self): self.checkBadSizingTooSmall("Tffo")
 
 
+    ############################################################
+    # Now some specific cases
+
+    def checkInconsistentSubarrays(self, opts):
+
+        values = {}
+
+        indices = {}
+        indices["t"] = (0,3)
+        indices["n"] = "a"
+        indices["N"] = "a"
+        indices["l"] = [0,1,2]
+        indices["a"] = ar([0,1,2],dtype=uint)
+        indices["f"] = ar([0,1,2],dtype=float64)
+        indices["e"] = None  # empty
+
+        A = [[1,0,  0],
+             [0,1],      # inconsistent; does this get caught?
+             [0,0.5,0]]
+
+        values = {}
+        values["L"] = A
+        values["l"] = [ar(le) for le in A]
+        values["B"] = [[1, 0, 0], [[1,0,0]], [0,1,1]]
+        values["C"] = [[1, 0, 0], [1, 1,[1]], [0,1,1]]
+        values["D"] = [[1, 0, 0], [1,1,[]], [0,1,1]]
+        values["E"] = [[1, 0, 0], (1,1,1), [0,1,1]]
+
+        targets = {}
+        targets["s"] = 1
+        targets["l"] = [1,1,1]
+        targets["a"] = ar([1,1,1],dtype=uint)
+        targets["f"] = ar([1,1,1],dtype=float64)
+
+        lp = LPSolve()
+
+        if opts[0] == "N":
+            lp.getVariables(indices["N"], 3)
+
+        io = indices[opts[0]]
+        vl = values [opts[1]]
+        tr = targets[opts[2]]
+        ob = [1,2,3]
+        
+        if io is None:
+            self.assertRaises(ValueError, lambda: lp.addConstraint(vl, ">=", tr))
+        else:
+            self.assertRaises(ValueError, lambda: lp.addConstraint( (io, vl), ">=", tr))
+
+    def testInconsistentSubarrays_tLs(self): self.checkInconsistentSubarrays("tLs")
+    def testInconsistentSubarrays_tLl(self): self.checkInconsistentSubarrays("tLl")
+    def testInconsistentSubarrays_tLa(self): self.checkInconsistentSubarrays("tLa")
+    def testInconsistentSubarrays_tLf(self): self.checkInconsistentSubarrays("tLf")
+
+    def testInconsistentSubarrays_tls(self): self.checkInconsistentSubarrays("tls")
+    def testInconsistentSubarrays_tll(self): self.checkInconsistentSubarrays("tll")
+    def testInconsistentSubarrays_tla(self): self.checkInconsistentSubarrays("tla")
+    def testInconsistentSubarrays_tlf(self): self.checkInconsistentSubarrays("tlf")
+
+    
+    def testInconsistentSubarrays_nLs(self): self.checkInconsistentSubarrays("nLs")
+    def testInconsistentSubarrays_nLl(self): self.checkInconsistentSubarrays("nLl")
+    def testInconsistentSubarrays_nLa(self): self.checkInconsistentSubarrays("nLa")
+    def testInconsistentSubarrays_nLf(self): self.checkInconsistentSubarrays("nLf")
+
+    def testInconsistentSubarrays_nls(self): self.checkInconsistentSubarrays("nls")
+    def testInconsistentSubarrays_nll(self): self.checkInconsistentSubarrays("nll")
+    def testInconsistentSubarrays_nla(self): self.checkInconsistentSubarrays("nla")
+    def testInconsistentSubarrays_nlf(self): self.checkInconsistentSubarrays("nlf")
+
+    def testInconsistentSubarrays_nBs(self): self.checkInconsistentSubarrays("nBs")
+    def testInconsistentSubarrays_nBl(self): self.checkInconsistentSubarrays("nBl")
+    def testInconsistentSubarrays_nBa(self): self.checkInconsistentSubarrays("nBa")
+    def testInconsistentSubarrays_nBf(self): self.checkInconsistentSubarrays("nBf")
+
+    def testInconsistentSubarrays_nCs(self): self.checkInconsistentSubarrays("nCs")
+    def testInconsistentSubarrays_nCl(self): self.checkInconsistentSubarrays("nCl")
+    def testInconsistentSubarrays_nCa(self): self.checkInconsistentSubarrays("nCa")
+    def testInconsistentSubarrays_nCf(self): self.checkInconsistentSubarrays("nCf")
+
+    def testInconsistentSubarrays_nDs(self): self.checkInconsistentSubarrays("nDs")
+    def testInconsistentSubarrays_nDl(self): self.checkInconsistentSubarrays("nDl")
+    def testInconsistentSubarrays_nDa(self): self.checkInconsistentSubarrays("nDa")
+    def testInconsistentSubarrays_nDf(self): self.checkInconsistentSubarrays("nDf")
+
+
+    def testInconsistentSubarrays_NLs(self): self.checkInconsistentSubarrays("NLs")
+    def testInconsistentSubarrays_NLl(self): self.checkInconsistentSubarrays("NLl")
+    def testInconsistentSubarrays_NLa(self): self.checkInconsistentSubarrays("NLa")
+    def testInconsistentSubarrays_NLf(self): self.checkInconsistentSubarrays("NLf")
+
+    def testInconsistentSubarrays_Nls(self): self.checkInconsistentSubarrays("Nls")
+    def testInconsistentSubarrays_Nll(self): self.checkInconsistentSubarrays("Nll")
+    def testInconsistentSubarrays_Nla(self): self.checkInconsistentSubarrays("Nla")
+    def testInconsistentSubarrays_Nlf(self): self.checkInconsistentSubarrays("Nlf")
+
+    def testInconsistentSubarrays_NBs(self): self.checkInconsistentSubarrays("NBs")
+    def testInconsistentSubarrays_NBl(self): self.checkInconsistentSubarrays("NBl")
+    def testInconsistentSubarrays_NBa(self): self.checkInconsistentSubarrays("NBa")
+    def testInconsistentSubarrays_NBf(self): self.checkInconsistentSubarrays("NBf")
+
+    def testInconsistentSubarrays_NCs(self): self.checkInconsistentSubarrays("NCs")
+    def testInconsistentSubarrays_NCl(self): self.checkInconsistentSubarrays("NCl")
+    def testInconsistentSubarrays_NCa(self): self.checkInconsistentSubarrays("NCa")
+    def testInconsistentSubarrays_NCf(self): self.checkInconsistentSubarrays("NCf")
+
+    def testInconsistentSubarrays_NDs(self): self.checkInconsistentSubarrays("NDs")
+    def testInconsistentSubarrays_NDl(self): self.checkInconsistentSubarrays("NDl")
+    def testInconsistentSubarrays_NDa(self): self.checkInconsistentSubarrays("NDa")
+    def testInconsistentSubarrays_NDf(self): self.checkInconsistentSubarrays("NDf")
+
+
+    def testInconsistentSubarrays_lLs(self): self.checkInconsistentSubarrays("lLs")
+    def testInconsistentSubarrays_lLl(self): self.checkInconsistentSubarrays("lLl")
+    def testInconsistentSubarrays_lLa(self): self.checkInconsistentSubarrays("lLa")
+    def testInconsistentSubarrays_lLf(self): self.checkInconsistentSubarrays("lLf")
+
+    def testInconsistentSubarrays_lls(self): self.checkInconsistentSubarrays("lls")
+    def testInconsistentSubarrays_lll(self): self.checkInconsistentSubarrays("lll")
+    def testInconsistentSubarrays_lla(self): self.checkInconsistentSubarrays("lla")
+    def testInconsistentSubarrays_llf(self): self.checkInconsistentSubarrays("llf")
+
+    def testInconsistentSubarrays_lBs(self): self.checkInconsistentSubarrays("lBs")
+    def testInconsistentSubarrays_lBl(self): self.checkInconsistentSubarrays("lBl")
+    def testInconsistentSubarrays_lBa(self): self.checkInconsistentSubarrays("lBa")
+    def testInconsistentSubarrays_lBf(self): self.checkInconsistentSubarrays("lBf")
+
+    def testInconsistentSubarrays_lCs(self): self.checkInconsistentSubarrays("lCs")
+    def testInconsistentSubarrays_lCl(self): self.checkInconsistentSubarrays("lCl")
+    def testInconsistentSubarrays_lCa(self): self.checkInconsistentSubarrays("lCa")
+    def testInconsistentSubarrays_lCf(self): self.checkInconsistentSubarrays("lCf")
+
+    def testInconsistentSubarrays_lDs(self): self.checkInconsistentSubarrays("lDs")
+    def testInconsistentSubarrays_lDl(self): self.checkInconsistentSubarrays("lDl")
+    def testInconsistentSubarrays_lDa(self): self.checkInconsistentSubarrays("lDa")
+    def testInconsistentSubarrays_lDf(self): self.checkInconsistentSubarrays("lDf")
+
+
+    def testInconsistentSubarrays_aLs(self): self.checkInconsistentSubarrays("aLs")
+    def testInconsistentSubarrays_aLl(self): self.checkInconsistentSubarrays("aLl")
+    def testInconsistentSubarrays_aLa(self): self.checkInconsistentSubarrays("aLa")
+    def testInconsistentSubarrays_aLf(self): self.checkInconsistentSubarrays("aLf")
+
+    def testInconsistentSubarrays_als(self): self.checkInconsistentSubarrays("als")
+    def testInconsistentSubarrays_all(self): self.checkInconsistentSubarrays("all")
+    def testInconsistentSubarrays_ala(self): self.checkInconsistentSubarrays("ala")
+    def testInconsistentSubarrays_alf(self): self.checkInconsistentSubarrays("alf")
+
+    def testInconsistentSubarrays_aBs(self): self.checkInconsistentSubarrays("aBs")
+    def testInconsistentSubarrays_aBl(self): self.checkInconsistentSubarrays("aBl")
+    def testInconsistentSubarrays_aBa(self): self.checkInconsistentSubarrays("aBa")
+    def testInconsistentSubarrays_aBf(self): self.checkInconsistentSubarrays("aBf")
+
+    def testInconsistentSubarrays_aCs(self): self.checkInconsistentSubarrays("aCs")
+    def testInconsistentSubarrays_aCl(self): self.checkInconsistentSubarrays("aCl")
+    def testInconsistentSubarrays_aCa(self): self.checkInconsistentSubarrays("aCa")
+    def testInconsistentSubarrays_aCf(self): self.checkInconsistentSubarrays("aCf")
+
+    def testInconsistentSubarrays_aDs(self): self.checkInconsistentSubarrays("aDs")
+    def testInconsistentSubarrays_aDl(self): self.checkInconsistentSubarrays("aDl")
+    def testInconsistentSubarrays_aDa(self): self.checkInconsistentSubarrays("aDa")
+    def testInconsistentSubarrays_aDf(self): self.checkInconsistentSubarrays("aDf")
+
+
+    def testInconsistentSubarrays_fLs(self): self.checkInconsistentSubarrays("fLs")
+    def testInconsistentSubarrays_fLl(self): self.checkInconsistentSubarrays("fLl")
+    def testInconsistentSubarrays_fLa(self): self.checkInconsistentSubarrays("fLa")
+    def testInconsistentSubarrays_fLf(self): self.checkInconsistentSubarrays("fLf")
+
+    def testInconsistentSubarrays_fls(self): self.checkInconsistentSubarrays("fls")
+    def testInconsistentSubarrays_fll(self): self.checkInconsistentSubarrays("fll")
+    def testInconsistentSubarrays_fla(self): self.checkInconsistentSubarrays("fla")
+    def testInconsistentSubarrays_flf(self): self.checkInconsistentSubarrays("flf")
+
+    def testInconsistentSubarrays_fBs(self): self.checkInconsistentSubarrays("fBs")
+    def testInconsistentSubarrays_fBl(self): self.checkInconsistentSubarrays("fBl")
+    def testInconsistentSubarrays_fBa(self): self.checkInconsistentSubarrays("fBa")
+    def testInconsistentSubarrays_fBf(self): self.checkInconsistentSubarrays("fBf")
+
+    def testInconsistentSubarrays_fCs(self): self.checkInconsistentSubarrays("fCs")
+    def testInconsistentSubarrays_fCl(self): self.checkInconsistentSubarrays("fCl")
+    def testInconsistentSubarrays_fCa(self): self.checkInconsistentSubarrays("fCa")
+    def testInconsistentSubarrays_fCf(self): self.checkInconsistentSubarrays("fCf")
+
+    def testInconsistentSubarrays_fDs(self): self.checkInconsistentSubarrays("fDs")
+    def testInconsistentSubarrays_fDl(self): self.checkInconsistentSubarrays("fDl")
+    def testInconsistentSubarrays_fDa(self): self.checkInconsistentSubarrays("fDa")
+    def testInconsistentSubarrays_fDf(self): self.checkInconsistentSubarrays("fDf")
+
+
+    def testInconsistentSubarrays_eLs(self): self.checkInconsistentSubarrays("eLs")
+    def testInconsistentSubarrays_eLl(self): self.checkInconsistentSubarrays("eLl")
+    def testInconsistentSubarrays_eLa(self): self.checkInconsistentSubarrays("eLa")
+    def testInconsistentSubarrays_eLf(self): self.checkInconsistentSubarrays("eLf")
+
+    def testInconsistentSubarrays_els(self): self.checkInconsistentSubarrays("els")
+    def testInconsistentSubarrays_ell(self): self.checkInconsistentSubarrays("ell")
+    def testInconsistentSubarrays_ela(self): self.checkInconsistentSubarrays("ela")
+    def testInconsistentSubarrays_elf(self): self.checkInconsistentSubarrays("elf")
+
+    def testInconsistentSubarrays_eBs(self): self.checkInconsistentSubarrays("eBs")
+    def testInconsistentSubarrays_eBl(self): self.checkInconsistentSubarrays("eBl")
+    def testInconsistentSubarrays_eBa(self): self.checkInconsistentSubarrays("eBa")
+    def testInconsistentSubarrays_eBf(self): self.checkInconsistentSubarrays("eBf")
+
+    def testInconsistentSubarrays_eCs(self): self.checkInconsistentSubarrays("eCs")
+    def testInconsistentSubarrays_eCl(self): self.checkInconsistentSubarrays("eCl")
+    def testInconsistentSubarrays_eCa(self): self.checkInconsistentSubarrays("eCa")
+    def testInconsistentSubarrays_eCf(self): self.checkInconsistentSubarrays("eCf")
+
+    def testInconsistentSubarrays_eDs(self): self.checkInconsistentSubarrays("eDs")
+    def testInconsistentSubarrays_eDl(self): self.checkInconsistentSubarrays("eDl")
+    def testInconsistentSubarrays_eDa(self): self.checkInconsistentSubarrays("eDa")
+    def testInconsistentSubarrays_eDf(self): self.checkInconsistentSubarrays("eDf")
+    
+
+
 if __name__ == '__main__':
     unittest.main()

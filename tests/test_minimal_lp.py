@@ -486,8 +486,6 @@ class TestTwoLevel(unittest.TestCase):
     def testConstraints_T5(self): self.checkMinLP1("T5")
     def testConstraints_T5(self): self.checkMinLP1("T5")
 
-
-
     def testConstraints_Ttl(self): self.checkMinLP1("Ttl")
     def testConstraints_Tta(self): self.checkMinLP1("Tta")
     def testConstraints_Ttf(self): self.checkMinLP1("Ttf")
@@ -516,6 +514,181 @@ class TestTwoLevel(unittest.TestCase):
     def testConstraints_Tfa(self): self.checkMinLP1("Tfa")
     def testConstraints_Tff(self): self.checkMinLP1("Tff")
     def testConstraints_Tfs(self): self.checkMinLP1("Tfs")
+
+    
+    ############################################################
+    # Test 2d stuff
+
+    def check2dMatrix(self, opts):
+
+        values = {}
+
+        indices = {}
+        indices["t"] = (0,3)
+        indices["n"] = "a"
+        indices["N"] = "a"
+        indices["l"] = [0,1,2]
+        indices["a"] = ar([0,1,2],dtype=uint)
+        indices["f"] = ar([0,1,2],dtype=float64)
+        indices["e"] = None  # empty
+
+        A = [[1,0,  0],
+             [0,0,  0.5],
+             [0,0.5,0]]
+
+        values = {}
+        values["L"] = A
+        values["l"] = [ar(le) for le in A]
+        values["a"] = ar(A)
+
+        targets = {}
+        targets["s"] = 1
+        targets["l"] = [1,1,1]
+        targets["a"] = ar([1,1,1],dtype=uint)
+        targets["f"] = ar([1,1,1],dtype=float64)
+
+        lp = LPSolve()
+
+        if opts[0] == "N":
+            lp.getVariables(indices["N"], 3)
+
+        io = indices[opts[0]]
+        vl = values [opts[1]]
+        tr = targets[opts[2]]
+        ob = [1,2,3]
+        
+        if io is None:
+            lp.addConstraint(vl, ">=", tr)
+            lp.setObjective(ob)
+        else:
+            lp.addConstraint( (io, vl), ">=", tr)
+            lp.setObjective( (io, ob) ) 
+
+        for num_times in range(2):  # make sure it's same anser second time
+            lp.solve()
+
+            self.assertAlmostEqual(lp.getObjectiveValue(), 11)
+
+            v = lp.getSolution()
+
+            self.assert_(len(v) == 3)
+            self.assertAlmostEqual(v[0], 1)
+            self.assertAlmostEqual(v[1], 2)
+            self.assertAlmostEqual(v[2], 2)
+
+
+    def test2DMatrix_tLs(self): self.check2dMatrix("tLs")
+    def test2DMatrix_tLl(self): self.check2dMatrix("tLl")
+    def test2DMatrix_tLa(self): self.check2dMatrix("tLa")
+    def test2DMatrix_tLf(self): self.check2dMatrix("tLf")
+
+    def test2DMatrix_tls(self): self.check2dMatrix("tls")
+    def test2DMatrix_tll(self): self.check2dMatrix("tll")
+    def test2DMatrix_tla(self): self.check2dMatrix("tla")
+    def test2DMatrix_tlf(self): self.check2dMatrix("tlf")
+
+    def test2DMatrix_tas(self): self.check2dMatrix("tls")
+    def test2DMatrix_tal(self): self.check2dMatrix("tll")
+    def test2DMatrix_taa(self): self.check2dMatrix("tla")
+    def test2DMatrix_taf(self): self.check2dMatrix("tlf")
+
+    
+    def test2DMatrix_nLs(self): self.check2dMatrix("nLs")
+    def test2DMatrix_nLl(self): self.check2dMatrix("nLl")
+    def test2DMatrix_nLa(self): self.check2dMatrix("nLa")
+    def test2DMatrix_nLf(self): self.check2dMatrix("nLf")
+
+    def test2DMatrix_nls(self): self.check2dMatrix("nls")
+    def test2DMatrix_nll(self): self.check2dMatrix("nll")
+    def test2DMatrix_nla(self): self.check2dMatrix("nla")
+    def test2DMatrix_nlf(self): self.check2dMatrix("nlf")
+
+    def test2DMatrix_nas(self): self.check2dMatrix("nls")
+    def test2DMatrix_nal(self): self.check2dMatrix("nll")
+    def test2DMatrix_naa(self): self.check2dMatrix("nla")
+    def test2DMatrix_naf(self): self.check2dMatrix("nlf")
+
+
+    def test2DMatrix_NLs(self): self.check2dMatrix("NLs")
+    def test2DMatrix_NLl(self): self.check2dMatrix("NLl")
+    def test2DMatrix_NLa(self): self.check2dMatrix("NLa")
+    def test2DMatrix_NLf(self): self.check2dMatrix("NLf")
+
+    def test2DMatrix_Nls(self): self.check2dMatrix("Nls")
+    def test2DMatrix_Nll(self): self.check2dMatrix("Nll")
+    def test2DMatrix_Nla(self): self.check2dMatrix("Nla")
+    def test2DMatrix_Nlf(self): self.check2dMatrix("Nlf")
+
+    def test2DMatrix_Nas(self): self.check2dMatrix("Nls")
+    def test2DMatrix_Nal(self): self.check2dMatrix("Nll")
+    def test2DMatrix_Naa(self): self.check2dMatrix("Nla")
+    def test2DMatrix_Naf(self): self.check2dMatrix("Nlf")
+
+
+    def test2DMatrix_lLs(self): self.check2dMatrix("lLs")
+    def test2DMatrix_lLl(self): self.check2dMatrix("lLl")
+    def test2DMatrix_lLa(self): self.check2dMatrix("lLa")
+    def test2DMatrix_lLf(self): self.check2dMatrix("lLf")
+
+    def test2DMatrix_lls(self): self.check2dMatrix("lls")
+    def test2DMatrix_lll(self): self.check2dMatrix("lll")
+    def test2DMatrix_lla(self): self.check2dMatrix("lla")
+    def test2DMatrix_llf(self): self.check2dMatrix("llf")
+
+    def test2DMatrix_las(self): self.check2dMatrix("lls")
+    def test2DMatrix_lal(self): self.check2dMatrix("lll")
+    def test2DMatrix_laa(self): self.check2dMatrix("lla")
+    def test2DMatrix_laf(self): self.check2dMatrix("llf")
+
+
+    def test2DMatrix_aLs(self): self.check2dMatrix("aLs")
+    def test2DMatrix_aLl(self): self.check2dMatrix("aLl")
+    def test2DMatrix_aLa(self): self.check2dMatrix("aLa")
+    def test2DMatrix_aLf(self): self.check2dMatrix("aLf")
+
+    def test2DMatrix_als(self): self.check2dMatrix("als")
+    def test2DMatrix_all(self): self.check2dMatrix("all")
+    def test2DMatrix_ala(self): self.check2dMatrix("ala")
+    def test2DMatrix_alf(self): self.check2dMatrix("alf")
+
+    def test2DMatrix_aas(self): self.check2dMatrix("als")
+    def test2DMatrix_aal(self): self.check2dMatrix("all")
+    def test2DMatrix_aaa(self): self.check2dMatrix("ala")
+    def test2DMatrix_aaf(self): self.check2dMatrix("alf")
+
+
+    def test2DMatrix_fLs(self): self.check2dMatrix("fLs")
+    def test2DMatrix_fLl(self): self.check2dMatrix("fLl")
+    def test2DMatrix_fLa(self): self.check2dMatrix("fLa")
+    def test2DMatrix_fLf(self): self.check2dMatrix("fLf")
+
+    def test2DMatrix_fls(self): self.check2dMatrix("fls")
+    def test2DMatrix_fll(self): self.check2dMatrix("fll")
+    def test2DMatrix_fla(self): self.check2dMatrix("fla")
+    def test2DMatrix_flf(self): self.check2dMatrix("flf")
+
+    def test2DMatrix_fas(self): self.check2dMatrix("fls")
+    def test2DMatrix_fal(self): self.check2dMatrix("fll")
+    def test2DMatrix_faa(self): self.check2dMatrix("fla")
+    def test2DMatrix_faf(self): self.check2dMatrix("flf")
+
+
+    def test2DMatrix_eLs(self): self.check2dMatrix("eLs")
+    def test2DMatrix_eLl(self): self.check2dMatrix("eLl")
+    def test2DMatrix_eLa(self): self.check2dMatrix("eLa")
+    def test2DMatrix_eLf(self): self.check2dMatrix("eLf")
+
+    def test2DMatrix_els(self): self.check2dMatrix("els")
+    def test2DMatrix_ell(self): self.check2dMatrix("ell")
+    def test2DMatrix_ela(self): self.check2dMatrix("ela")
+    def test2DMatrix_elf(self): self.check2dMatrix("elf")
+
+    def test2DMatrix_eas(self): self.check2dMatrix("els")
+    def test2DMatrix_eal(self): self.check2dMatrix("ell")
+    def test2DMatrix_eaa(self): self.check2dMatrix("ela")
+    def test2DMatrix_eaf(self): self.check2dMatrix("elf")
+
+
 
     ############################################################
     # More specific cases

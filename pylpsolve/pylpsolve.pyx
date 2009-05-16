@@ -724,8 +724,8 @@ cdef class LPSolve(object):
 
             # Make sure it's split into index, value pair
             if len(t_coeff) != 2:
-                raise TypeError("coefficients should be either a single array, "
-                                "a dictionary, or a 2-tuple with (index block, values)")
+                raise ValueError("coefficients should be either a single array, "
+                                 "a dictionary, or a 2-tuple with (index block, values)")
 
             return self._addConstraintArray(t_coeff[0], t_coeff[1], ctype, rhs)
 
@@ -744,20 +744,28 @@ cdef class LPSolve(object):
             if is_list_sequence: 
                 is_numerical_sequence = False
             else:
-                is_numerical_sequence = self._isNumericalList(<list>coefficients)                    
-                
+                is_numerical_sequence = self._isNumericalList(<list>coefficients)
+            
             if is_list_sequence:
                 return self._addConstraintTupleList(<list>coefficients, ctype, rhs)
             elif is_numerical_sequence:
                 return self._addConstraintArray(None, coefficients, ctype, rhs)
             else:
-                raise TypeError("Coefficient list must be either list of scalars or list of 2-tuples.")
+
+                # try interpreting it as an array
+
+                A = self._attemptArrayList(<list>coefficients)
+
+                if A is None:
+                    raise ValueError("Coefficient list must containt one of: scalars, 2-tuples, or lists/1d-arrays.")
+                else:
+                    self._addConstraintArray(None, A, ctype, rhs)
 
         elif coefftype is dict:
             return self._addConstraintDict(<dict>coefficients, ctype, rhs)
 
         else:
-            raise TypeError("Type of coefficients not recognized; must be dict, list, 2-tuple, or array.")
+            raise ValueError("Coefficients must be dict, list, 2-tuple, or array.")
 
 
     cdef _addConstraintArray(self, t_idx, t_val, str ctype, rhs):
@@ -854,8 +862,8 @@ cdef class LPSolve(object):
             
             # It's split into index, value pair
             if len(t) != 2:
-                raise TypeError("coefficients should be either a single array, "
-                                "a dictionary, or a 2-tuple with (index block, values)")
+                raise ValueError("coefficients must be a single array, list,"
+                                "dictionary, or a 2-tuple with (index block, values)")
 
             idx, val = t
 
@@ -1076,7 +1084,55 @@ cdef class LPSolve(object):
                 return False
 
         return True
-       
+
+    cdef ar _attemptArrayList(self, list l):
+
+        # Now we need to specify that only lists of lists or lists of
+        # arrays are allowed, not lists of tuples.  
+    
+        cdef bint is_l, is_a
+        cdef int all_size = -1, size
+        cdef bint inconsistent_lengths = False
+        cdef ar A
+
+        for t in l:
+            
+            is_l = isinstance(t, list)
+            is_a = isinstance(t, ndarray)
+            
+            if not (is_l or is_a):
+                return None
+
+            elif is_l:
+                if not self._isNumericalList(<list>t):
+                    return None
+
+                size = len(<list>t)
+
+            elif is_a:
+                A = <ar>t
+                
+                if A.ndim != 1:
+                    return None
+                
+                size = A.shape[0]
+
+            else:
+                return None
+            
+            # Keep track of the sizes
+            if all_size == -1:
+                all_size = size
+            else:
+                if all_size != size:
+                    inconsistent_lengths = True
+
+        if inconsistent_lengths:
+            raise ValueError("Lengths of sublist in list of lists/arrays not consistent.")
+        else:
+            return array(l, npfloat)
+                
+
     cdef tuple _getArrayPairFromDict(self, dict d):
         # Builds an array pair from a dictionary
 
