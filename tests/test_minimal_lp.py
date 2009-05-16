@@ -395,31 +395,30 @@ class TestTwoLevel(unittest.TestCase):
                     lp.addConstraint( (indices[opts[0]], weights[opts[1]]), ">=", 1)
                     lp.addToObjective( (indices[opts[0]], obj_func[opts[1]]))
 
-        lp.solve()
+        for num_times in range(2):
+            lp.solve()
 
-        self.assertAlmostEqual(lp.getObjectiveValue(), 2)
-        
-        if disable_regular_check:
-            for k, l in register_check.iteritems():
-                v = lp.getSolution(k)
-                self.assert_(len(v) == len(l))
-                for i1,i2 in zip(l,v):
-                    self.assertAlmostEqual(i1,i2)
-        else:
-            v = lp.getSolution()
+            self.assertAlmostEqual(lp.getObjectiveValue(), 2)
 
-            self.assert_(len(v) == 6, "len(v) = %d != 6" % len(v))
-            self.assertAlmostEqual(v[0], 1)
-            self.assertAlmostEqual(v[1], 0)
-            self.assertAlmostEqual(v[2], 0)
-            self.assertAlmostEqual(v[3], 1)
-            self.assertAlmostEqual(v[4], 0)
-            self.assertAlmostEqual(v[5], 0)
+            if disable_regular_check:
+                for k, l in register_check.iteritems():
+                    v = lp.getSolution(k)
+                    self.assert_(len(v) == len(l))
+                    for i1,i2 in zip(l,v):
+                        self.assertAlmostEqual(i1,i2)
+            else:
+                v = lp.getSolution()
 
-            # now test the retrieval
+                self.assert_(len(v) == 6, "len(v) = %d != 6" % len(v))
+                self.assertAlmostEqual(v[0], 1)
+                self.assertAlmostEqual(v[1], 0)
+                self.assertAlmostEqual(v[2], 0)
+                self.assertAlmostEqual(v[3], 1)
+                self.assertAlmostEqual(v[4], 0)
+                self.assertAlmostEqual(v[5], 0)
+
+                # now test the retrieval
             
-            
-
 
     def testConstraints_tl(self): self.checkMinLP1("tl")
     def testConstraints_ta(self): self.checkMinLP1("ta")

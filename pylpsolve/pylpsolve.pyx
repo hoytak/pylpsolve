@@ -897,6 +897,9 @@ cdef class LPSolve(object):
 
     cdef applyObjective(self):
 
+        if not self._obj_func_specified:
+            return
+
         assert self.lp != NULL
 
         cdef ar[int, mode="c"]    I
@@ -1123,9 +1126,14 @@ cdef class LPSolve(object):
 
         cdef ar[size_t, ndim=2, mode="c"] B
 
-        if isposint(k) and isnumeric(v):
+        if isposint(k):
+            tV = self._resolveValues(v, True)
+            
+            if tV.shape[0] != 1:
+                raise ValueError("Scalar index must specify only one value.")
+
             key_buf.append(k)
-            val_buf.append(v)
+            val_buf.append(tV[0])
             count[0] += 1
 
         elif (type(k) is str or type(k) is tuple 
