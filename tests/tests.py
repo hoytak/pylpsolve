@@ -9,12 +9,15 @@ if __name__ == '__main__':
     import test_minimal_lp
     import test_corner
     import test_tiny_lp
+    import test_errorcatch
 
     ts = unittest.TestSuite([
             dtl.loadTestsFromModule(test_blocks),
             dtl.loadTestsFromModule(test_minimal_lp),
             dtl.loadTestsFromModule(test_corner),
-            dtl.loadTestsFromModule(test_tiny_lp)])
+            dtl.loadTestsFromModule(test_tiny_lp),
+            dtl.loadTestsFromModule(test_errorcatch)
+            ])
 
     if '--verbose' in sys.argv:
         unittest.TextTestRunner(verbosity=2).run(ts)
