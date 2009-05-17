@@ -1,7 +1,7 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
 from pylpsolve import LPSolve, LPSolveException
-from numpy import array as ar, ones, eye, float64, uint, int
+from numpy import array as ar, ones, eye, float64, uint, int, ones
 
 class TestErrorCatch(unittest.TestCase):
     # test constraint adding by (wrong typed index array, value array)
@@ -491,8 +491,8 @@ class TestErrorCatch(unittest.TestCase):
         values["L"] = A
         values["l"] = [ar(le) for le in A]
         values["B"] = [[1, 0, 0], [[1,0,0]], [0,1,1]]
-        values["C"] = [[1, 0, 0], [1, 1,[1]], [0,1,1]]
-        values["D"] = [[1, 0, 0], [1,1,[]], [0,1,1]]
+        values["C"] = ones((1,3,3) )
+        values["D"] = [[1, 0, 0], [1,1,[1]], [0,1,1]]
         values["E"] = [[1, 0, 0], (1,1,1), [0,1,1]]
 
         targets = {}

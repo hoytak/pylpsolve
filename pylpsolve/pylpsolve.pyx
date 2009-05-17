@@ -5,21 +5,10 @@ cimport cython
 
 from numpy import int32,uint32,int64, uint64, float32, float64,\
     uint, empty, ones, zeros, uint, arange, isscalar, amax, amin, \
-    ndarray, array, asarray
+    ndarray, array, asarray, isfinite
 
 import warnings
 import optionlookup
-
-######################################################################
-# A few early binding things
-
-cdef dict default_options = optionlookup._default_options
-cdef dict presolve_flags  = optionlookup._presolve_flags
-cdef dict pricer_lookup   = optionlookup._pricer_lookup
-cdef dict pricer_flags    = optionlookup._pricer_flags
-
-cdef double infty = 1e30
-cdef tuple range_tuple_size = (1, 2)
 
 ########################################
 # Set the proper types
@@ -50,6 +39,20 @@ from numpy import isscalar
 
 ctypedef unsigned char ecode
 ctypedef double real
+
+
+######################################################################
+# A few early binding things
+
+cdef dict default_options = optionlookup._default_options
+cdef dict presolve_flags  = optionlookup._presolve_flags
+cdef dict pricer_lookup   = optionlookup._pricer_lookup
+cdef dict pricer_flags    = optionlookup._pricer_flags
+
+cdef double infty = 1e30
+cdef ar pos_arinfty = array([infty], npfloat)
+cdef ar neg_arinfty = array([-infty], npfloat)
+cdef tuple range_tuple_size = (1, 2)
 
 ############################################################
 # Miscilaneous utility functions for resolving types
@@ -99,6 +102,8 @@ cdef extern from "lpsolve/lp_lib.h":
 
     ecode set_obj_fn(lprec*, real* row)
     ecode set_obj_fnex(lprec*, int count, real*row, int *colno)
+    void set_maxim(lprec *lp)
+    void set_minim(lprec *lp)
 
     ecode add_constraint(lprec*, real* row, int ctype, real rh)
     ecode add_constraintex(lprec*, int count, real* row, int *colno, int ctype, real rh)
@@ -192,7 +197,7 @@ cdef class LPSolve(object):
     cdef list _lower_bound_keys, _lower_bound_values
     cdef size_t _lower_bound_count
 
-    cdef list _upper_bound_keys, _upper_bound_valuse
+    cdef list _upper_bound_keys, _upper_bound_values
     cdef size_t _upper_bound_count
     
     # The objective function
@@ -200,7 +205,7 @@ cdef class LPSolve(object):
     cdef list _obj_func_values
     cdef bint _obj_func_specified
     cdef size_t _obj_func_n_vals_count 
-    cdef bint _maximize_mode, _mode_set
+    cdef bint _maximize_mode
 
     # Methods relating to named variable group
     cdef dict _named_index_blocks
@@ -235,24 +240,25 @@ cdef class LPSolve(object):
         self._lower_bound_count  = 0
 
         self._upper_bound_keys   = []
-        self._upper_bound_valuse = []
+        self._upper_bound_values = []
         self._upper_bound_count  = 0
 
         self._obj_func_keys   = []
         self._obj_func_values = []
         self._obj_func_specified = False
         self._obj_func_n_vals_count = 0
-        self._mode_set = False
-        self._maximize_mode = False
 
         self.clearConstraintBuffers()
 
         self.final_variables = None
 
-        if not restartable_mode:  
+        if not restartable_mode:
             if self.lp != NULL:
                 delete_lp(self.lp)
                 self.lp = NULL
+
+            # For the minimize default
+            self._maximize_mode = False
 
             self.n_rows = 0
             self.n_columns = 0
@@ -686,7 +692,7 @@ cdef class LPSolve(object):
     ############################################################
     # Methods dealing with constraints
 
-    def addConstraint(self, coefficients, str ctype, rhs):
+    cpdef addConstraint(self, coefficients, str ctype, rhs):
         """        
         Adds a constraint, or set of constraints to the lp.
 
@@ -759,10 +765,13 @@ cdef class LPSolve(object):
                 if A is None:
                     raise ValueError("Coefficient list must containt one of: scalars, 2-tuples, or lists/1d-arrays.")
                 else:
-                    self._addConstraintArray(None, A, ctype, rhs)
+                    return self._addConstraintArray(None, A, ctype, rhs)
 
         elif coefftype is dict:
             return self._addConstraintDict(<dict>coefficients, ctype, rhs)
+
+        elif isnumeric(coefficients):
+            return self.addConstraint( [coefficients], ctype, rhs)
 
         else:
             raise ValueError("Coefficients must be dict, list, 2-tuple, or array.")
@@ -863,7 +872,7 @@ cdef class LPSolve(object):
             # It's split into index, value pair
             if len(t) != 2:
                 raise ValueError("coefficients must be a single array, list,"
-                                "dictionary, or a 2-tuple with (index block, values)")
+                                 "dictionary, or a 2-tuple with (index block, values)")
 
             idx, val = t
 
@@ -894,6 +903,9 @@ cdef class LPSolve(object):
         elif coefftype is dict:
             idx, val = self._getArrayPairFromDict(<dict>coefficients)
 
+        elif isnumeric(coefficients):
+            idx, val = None, [coefficients]
+
         else:
             raise TypeError("Type of coefficients not recognized; must be dict, list, 2-tuple, or array.")
         
@@ -904,28 +916,32 @@ cdef class LPSolve(object):
         self._obj_func_specified = True
 
     cdef applyObjective(self):
-
-        if not self._obj_func_specified:
-            return
-
+        
         assert self.lp != NULL
 
         cdef ar[int, mode="c"]    I
         cdef ar[double, mode="c"] V
-
-        I, V = self._getArrayPairFromKeyValuePair(
-            self._obj_func_keys, 
-            self._obj_func_values, 
-            self._obj_func_n_vals_count)
-        
-        self._resetObjective()
-        
-        # necessary for the weird start-at-1 indexing
         cdef size_t i 
-        for 0 <= i < I.shape[0]: 
-            I[i] += 1
 
-        set_obj_fnex(self.lp, I.shape[0], <double*>V.data, <int*>I.data)
+        if self._maximize_mode:
+            set_maxim(self.lp)
+        else:
+            set_minim(self.lp)
+            
+        if self._obj_func_specified:
+
+            I, V = self._getArrayPairFromKeyValuePair(
+                self._obj_func_keys, 
+                self._obj_func_values, 
+                self._obj_func_n_vals_count)
+
+            self._resetObjective()
+
+            # necessary for the weird start-at-1 indexing
+            for 0 <= i < I.shape[0]: 
+                I[i] += 1
+
+            set_obj_fnex(self.lp, I.shape[0], <double*>V.data, <int*>I.data)
 
     ############################################################
     # Mode stuff
@@ -938,7 +954,6 @@ cdef class LPSolve(object):
         """
 
         self._maximize_mode = not minimize
-        self._mode_set = True
 
     cpdef setMaximize(self, bint maximize=True):
         """
@@ -948,8 +963,6 @@ cdef class LPSolve(object):
         """
 
         self._maximize_mode = maximize
-        self._mode_set = True
-    
 
     cdef _setMode(self, mode):
         if mode == None:
@@ -1002,30 +1015,25 @@ cdef class LPSolve(object):
         self._setBound(var, ub, False)
         
 
-    cdef _setBound(self, var, b, bint lower_bound):
-
-        cdef ar ba
-
+    cdef _setBound(self, varidx, b, bint lower_bound):
+        
         if b is None:
-            idx = self._resolveIdxBlock(var, 1)
-            val = -infty if lower_bound else infty
-        elif type(b) is ndarray:
-            ba = b
-            if ba.ndim != 1:
-                raise TypeError("Bound specification must be either scalar or 1d array.")
+            b = neg_arinfty if lower_bound else pos_arinfty
 
-            idx = self._resolveIdxBlock(var, ba.shape[0])
-            val = b.copy()
-        elif isnumeric(b):
-            idx = self._resolveIdxBlock(var, 1)
-            val = b
+        elif type(b) is list:
+            b = [(-infty if lower_bound else infty) 
+                 if be is None else be for be in b]
+
+        elif type(b) is ndarray:
+            b[~isfinite(b)] = -infty if lower_bound else infty
+
 
         if lower_bound:
             self._stackOnInterpretedKeyValuePair(
-                self._lower_bound_keys, self._lower_bound_values, idx, val, &self._lower_bound_count)
+                self._lower_bound_keys, self._lower_bound_values, varidx, b, &self._lower_bound_count)
         else:
             self._stackOnInterpretedKeyValuePair(
-                self._upper_bound_keys, self._upper_bound_values, idx, val, &self._upper_bound_count)
+                self._upper_bound_keys, self._upper_bound_values, varidx, b, &self._upper_bound_count)
             
 
     cdef applyVariableBounds(self):
@@ -1039,8 +1047,6 @@ cdef class LPSolve(object):
         I, V = self._getArrayPairFromKeyValuePair(
             self._lower_bound_keys, self._lower_bound_values, self._lower_bound_count)
 
-        cdef size_t i
-
         for 0 <= i < I.shape[0]:
             if V[i] == -infty:
                 set_unbounded(self.lp, I[i] + 1)
@@ -1051,18 +1057,18 @@ cdef class LPSolve(object):
         # undoes the lower bound
 
         I, V = self._getArrayPairFromKeyValuePair(
-            self._lower_bound_keys, self._lower_bound_values, self._lower_bound_count)
+            self._upper_bound_keys, self._upper_bound_values, self._upper_bound_count)
 
         cdef double lp_infty = get_infinite(self.lp)
-        cdef double ub
+        cdef double lb
 
         for 0 <= i < I.shape[0]:
             if V[i] == infty:
-                ub = get_upbo(self.lp, I[i] + 1)
-                set_unbounded(self.lp,  I[i] + 1)
+                lb = get_lowbo(self.lp, I[i] + 1)
+                set_unbounded(self.lp, I[i] + 1)
             
-                if ub != lp_infty:
-                    set_upbo(self.lp,  I[i] + 1, ub)
+                if lb != lp_infty:
+                    set_lowbo(self.lp,  I[i] + 1, lb)
             else:
                 set_upbo(self.lp, I[i] + 1, V[i])
 

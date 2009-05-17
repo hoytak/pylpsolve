@@ -58,6 +58,48 @@ class TestBasic(unittest.TestCase):
         self.assert_(len(v) == 2)
         self.assert_(v[1] == 1)
 
+    def test02_basic_minimize(self):
+        lp = LPSolve()
+
+        self.assert_(lp.addConstraint(1, ">", 10) == 0)
+
+        lp.setObjective(1)
+
+        # Minimize
+        lp.setMinimize()
+        lp.solve()
+        self.assertAlmostEqual(lp.getObjectiveValue(), 10)
+
+
+    def test03_basic_maximize(self):
+        lp = LPSolve()
+
+        self.assert_(lp.addConstraint(1, "<", 20) == 0)
+
+        lp.setObjective(1)
+
+        # Maximize
+        lp.setMaximize()
+        lp.solve()
+        self.assertAlmostEqual(lp.getObjectiveValue(), 20)
+
+    def test04_basic_maxmin_rerun(self):
+        lp = LPSolve()
+
+        self.assert_(lp.addConstraint(1, ">", 10) == 0)
+        self.assert_(lp.addConstraint(1, "<", 20) == 1)
+
+        lp.setObjective(1)
+
+        # Minimize
+        lp.setMinimize()
+        lp.solve()
+        self.assertAlmostEqual(lp.getObjectiveValue(), 10)
+
+        # Maximize
+        lp.setMaximize()
+        lp.solve()
+        self.assertAlmostEqual(lp.getObjectiveValue(), 20)
 
 
 class TestMinimal(unittest.TestCase):
@@ -127,14 +169,14 @@ class TestMinimal(unittest.TestCase):
                 assert False
 
             if opts[0] == "d":
-                lp.addConstraint(dict(cd), ">=", 1)
+                self.assert_(lp.addConstraint(dict(cd), ">=", 1) == 0)
                 lp.setObjective(dict(od))
             elif opts[0] == "T":
 
                 if opts[1] == "N":
                     lp.getVariables(indices["N"], 3)
 
-                lp.addConstraint(cd, ">=", 1)
+                self.assert_(lp.addConstraint(cd, ">=", 1) == 0)
                 lp.setObjective(od)
         else:
             assert len(opts) == 2
@@ -145,10 +187,10 @@ class TestMinimal(unittest.TestCase):
             io = indices[opts[0]]
 
             if io is None:
-                lp.addConstraint(weights[opts[1]], ">=", 1)
+                self.assert_(lp.addConstraint(weights[opts[1]], ">=", 1) == 0)
                 lp.setObjective(obj_func[opts[1]])
             else:
-                lp.addConstraint( (indices[opts[0]], weights[opts[1]]), ">=", 1)
+                self.assert_(lp.addConstraint( (indices[opts[0]], weights[opts[1]]), ">=", 1) == 0)
                 lp.setObjective( (indices[opts[0]], obj_func[opts[1]]))
 
         lp.solve()
@@ -319,7 +361,7 @@ class TestTwoLevel(unittest.TestCase):
         register_check = {}
         disable_regular_check = False
 
-        for indices, weights, obj_func in zip(idxlist, weightlist, obj_func_list):
+        for ci, (indices, weights, obj_func) in enumerate(zip(idxlist, weightlist, obj_func_list)):
 
             # Some ones used in the dict's case
             il = indices["l"]
@@ -371,14 +413,14 @@ class TestTwoLevel(unittest.TestCase):
                     assert False
 
                 if opts[0] == "d":
-                    lp.addConstraint(dict(cd), ">=", 1)
+                    self.assert_(lp.addConstraint(dict(cd), ">=", 1) == ci)
                     lp.addToObjective(dict(od))
                 elif opts[0] == "T":
 
                     if opts[1] == "N":
                         lp.getVariables(indices["N"], 3)
 
-                    lp.addConstraint(cd, ">=", 1)
+                    self.assert_(lp.addConstraint(cd, ">=", 1) == ci)
                     lp.addToObjective(od)
             else:
                 assert len(opts) == 2
@@ -389,10 +431,10 @@ class TestTwoLevel(unittest.TestCase):
                 io = indices[opts[0]]
 
                 if io is None:
-                    lp.addConstraint(weights[opts[1]], ">=", 1)
+                    self.assert_(lp.addConstraint(weights[opts[1]], ">=", 1) == ci)
                     lp.addToObjective(obj_func[opts[1]])
                 else:
-                    lp.addConstraint( (indices[opts[0]], weights[opts[1]]), ">=", 1)
+                    self.assert_(lp.addConstraint( (indices[opts[0]], weights[opts[1]]), ">=", 1) == ci)
                     lp.addToObjective( (indices[opts[0]], obj_func[opts[1]]))
 
         for num_times in range(2):
@@ -557,12 +599,16 @@ class TestTwoLevel(unittest.TestCase):
         tr = targets[opts[2]]
         ob = [1,2,3]
         
+        c_ret_idx = [0,1,2]
+
         if io is None:
-            lp.addConstraint(vl, ">=", tr)
+            ret = lp.addConstraint(vl, ">=", tr)
+            self.assert_(ret == c_ret_idx, "%s != %s" %(str(ret), str(c_ret_idx)))
             lp.setObjective(ob)
         else:
-            lp.addConstraint( (io, vl), ">=", tr)
-            lp.setObjective( (io, ob) ) 
+            ret = lp.addConstraint( (io, vl), ">=", tr)
+            self.assert_(ret == c_ret_idx, "%s != %s" %(str(ret), str(c_ret_idx)))
+            lp.setObjective( (io, ob) )
 
         for num_times in range(2):  # make sure it's same anser second time
             lp.solve()

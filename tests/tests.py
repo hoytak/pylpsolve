@@ -10,9 +10,11 @@ if __name__ == '__main__':
     import test_corner
     import test_tiny_lp
     import test_errorcatch
+    import test_bounds
 
     ts = unittest.TestSuite([
             dtl.loadTestsFromModule(test_blocks),
+            dtl.loadTestsFromModule(test_bounds),
             dtl.loadTestsFromModule(test_minimal_lp),
             dtl.loadTestsFromModule(test_corner),
             dtl.loadTestsFromModule(test_tiny_lp),
