@@ -11,6 +11,7 @@ if __name__ == '__main__':
     import test_tiny_lp
     import test_errorcatch
     import test_bounds
+    import test_graphs
 
     ts = unittest.TestSuite([
             dtl.loadTestsFromModule(test_blocks),
@@ -18,7 +19,8 @@ if __name__ == '__main__':
             dtl.loadTestsFromModule(test_minimal_lp),
             dtl.loadTestsFromModule(test_corner),
             dtl.loadTestsFromModule(test_tiny_lp),
-            dtl.loadTestsFromModule(test_errorcatch)
+            dtl.loadTestsFromModule(test_errorcatch),
+            dtl.loadTestsFromModule(test_graphs)
             ])
 
     if '--verbose' in sys.argv:

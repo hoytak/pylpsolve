@@ -38,6 +38,18 @@ _default_options = {
     "price_harristwopass"  :  False,
     "price_truenorminit"   :  False,
 
+    # Scaling stuff
+    "scaling"              : "geometric",
+    "scale_quadratic"      : False,
+    "scale_logarithmic"    : False,
+    "scale_userweight"     : False,
+    "scale_power2"         : False,
+    "scale_equilibrate"    : True,
+    "scale_integers"       : False,
+    "scale_dynupdate"      : False,
+    "scale_rowsonly"       : False,
+    "scale_colsonly"       : False,
+
     # Bookkeeping stuff
     "verbosity"            :  1,       # Lowest
     "error_on_bad_guess"   :  False
@@ -88,3 +100,22 @@ _pricer_flags = {
     "price_truenorminit"   : 16384}
 
 # need to add in scaling options
+_scaling_lookup = {
+    "none"                 : 0,
+    "extreme"              : 1,
+    "range"                : 2,
+    "mean"                 : 3,
+    "geometric"            : 4,
+    "curtisreid"           : 7}
+
+_scaling_flags = {
+    "scale_quadratic"      : 8,	 
+    "scale_logarithmic"    : 16,
+    "scale_userweight"     : 31,
+    "scale_power2"         : 32,
+    "scale_equilibrate"    : 64,
+    "scale_integers"       : 128,
+    "scale_dynupdate"      : 256,
+    "scale_rowsonly"       : 512,
+    "scale_colsonly"       : 1024}
+    

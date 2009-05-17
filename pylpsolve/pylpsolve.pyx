@@ -7,38 +7,82 @@ from numpy import int32,uint32,int64, uint64, float32, float64,\
     uint, empty, ones, zeros, uint, arange, isscalar, amax, amin, \
     ndarray, array, asarray, isfinite
 
+
+from typeconfig import npint, npuint, npfloat
+
 import warnings
 import optionlookup
 
-########################################
-# Set the proper types
+ctypedef unsigned char ecode
+ctypedef double real
 
-cdef object npfloat, npint, npuint
+##############################
+# This is how it should work
+#from typechecks cimport *
 
-if sizeof(double) == 8:
-    npfloat = float64
-else:
-    raise ImportError("Numpy type mismatch on double.")
+#This works
 
-if sizeof(int) == 4:
-    npint = int32
-elif sizeof(int) == 8:
-    npint = int64
-else:
-    raise ImportError("Numpy type mismatch on int.")
-
-if sizeof(size_t) == 4:
-    npuint = uint32
-elif sizeof(size_t) == 8:
-    npuint = uint64
-else:
-    raise ImportError("Numpy type mismatch on size_t.")
+############################################################
+# Miscilaneous utility functions for resolving types
 
 from types import IntType, LongType, FloatType
 from numpy import isscalar
 
-ctypedef unsigned char ecode
-ctypedef double real
+cdef inline isnumeric(v):
+    t_v = type(v)
+
+    global IntType
+    
+    if (t_v is IntType
+        or t_v is LongType
+        or t_v is FloatType):
+        return True
+    else:
+        return isscalar(v)
+
+cdef inline isposint(v):
+    t_v = type(v)
+
+    if (t_v is IntType or t_v is LongType) and v >= 0:
+        return True
+
+
+cdef inline bint issize(v):
+    t_v = type(v)
+
+    if (t_v is IntType or t_v is LongType) and v >= 1:
+        return True
+
+cdef inline bint istuplelist(list l):
+
+    for t in l:
+        if type(t) is not tuple or len(<tuple>t) != 2:
+            return False
+
+    return True
+        
+cdef inline bint isnumericlist(list l):
+    for t in l:
+        if not isnumeric(t):
+            return False
+
+    return True
+
+cdef inline bint is2dlist(list l):
+    cdef int length = -1
+
+    for ll in l:
+        if not isnumericlist(ll):
+            return False
+        if length == -1:
+            length = len(<list>ll)
+        else:
+            if length != len(<list>ll):
+                return False
+    else:
+        return True
+        
+
 
 
 ######################################################################
@@ -48,36 +92,14 @@ cdef dict default_options = optionlookup._default_options
 cdef dict presolve_flags  = optionlookup._presolve_flags
 cdef dict pricer_lookup   = optionlookup._pricer_lookup
 cdef dict pricer_flags    = optionlookup._pricer_flags
+cdef dict scaling_lookup  = optionlookup._scaling_lookup
+cdef dict scaling_flags   = optionlookup._scaling_flags
 
 cdef double infty = 1e30
 cdef ar pos_arinfty = array([infty], npfloat)
 cdef ar neg_arinfty = array([-infty], npfloat)
 cdef tuple range_tuple_size = (1, 2)
 
-############################################################
-# Miscilaneous utility functions for resolving types
-
-cdef inline bint isnumeric(v):
-    t_v = type(v)
-    
-    if (t_v is IntType
-        or t_v is LongType
-        or t_v is FloatType):
-        return True
-    else:
-        return isscalar(v)
-
-cdef inline bint isposint(v):
-    t_v = type(v)
-
-    if (t_v is IntType or t_v is LongType) and v >= 0:
-        return True
-
-cdef inline bint issize(v):
-    t_v = type(v)
-
-    if (t_v is IntType or t_v is LongType) and v >= 1:
-        return True
 
 ######################################################################
 # Forward declarations
@@ -115,6 +137,7 @@ cdef extern from "lpsolve/lp_lib.h":
 
     ecode set_add_rowmode(lprec*, unsigned char turn_on)
 
+    # Variable bounds
     ecode set_lowbo(lprec*, int column, real value)
     ecode set_upbo(lprec*, int column, real value)
     real get_lowbo(lprec*, int column)
@@ -123,13 +146,16 @@ cdef extern from "lpsolve/lp_lib.h":
     ecode set_bounds(lprec*, int column, real lower, real upper)
     ecode set_unbounded(lprec *lp, int column)
 
+    # Row bounds
     ecode set_rowex(lprec *lp, int row_no, int count, real *row, int *colno)
     ecode set_row(lprec *lp, int row_no, real *row)
     ecode set_constr_type(lprec *lp, int row, int con_type)
     ecode set_rh(lprec *lp, int row, real value)
     ecode set_rh_range(lprec *lp, int row, real deltavalue)
 
+    # presolve, scaling
     void set_presolve(lprec*, int do_presolve, int maxloops)
+    void set_scaling(lprec *, int scalemode)
 
     # Basis stuff
     ecode guess_basis(lprec *lp, real *guessvector, int *basisvector)
@@ -140,6 +166,7 @@ cdef extern from "lpsolve/lp_lib.h":
     ecode get_ptr_variables(lprec*, real **var)
     real get_objective(lprec*)
 
+    # pivoting
     void set_pivoting(lprec*, int rule)
     void set_sense(lprec *lp, bint maximize)
     
@@ -230,6 +257,9 @@ cdef class LPSolve(object):
         
         if self.lp != NULL:
             delete_lp(self.lp)
+
+    def clear(self):
+        self._clear(False)
 
     cdef _clear(self, bint restartable_mode):
         # If restartable mode, only delete all the temporary stuff
@@ -374,7 +404,22 @@ cdef class LPSolve(object):
         Pricing and Pivoting Options
         ==================================================
         
-        Available pricer options::
+        The main pricing options can take the following values::
+
+          "firstindex":
+            Select first available pivot.
+
+          "dantzig": 
+            Select according to Dantzig.
+
+          "devex":
+             Devex pricing from Paula Harris.
+             
+          "steepestedge":
+             Steepest Edge.
+
+        
+        Addition pricer options, which may be set using True::
     
           price_primalfallback: 
             In case of Steepest Edge, fall back to DEVEX in primal.
@@ -415,7 +460,85 @@ cdef class LPSolve(object):
           price_truenorminit:	
             Use true norms for Devex and Steepest Edge initializations.
 
+        Scaling Options
+        ========================================
+
+        There's a primary scaling mode plus additional flags may be
+        set.  The scaling mode can influence numerical stability
+        considerably.  It is advisable to always use some sort of
+        scaling.  
+
+        The available scale modes are set using the ``scale_mode``
+        option, which can take the following values:
+
+          "none":
+            No scaling used.
+
+          "extreme":
+            Scale to convergence using largest absolute value.
+
+          "range":
+            Scale based on the simple numerical range.
+
+          "mean":
+            Numerical range-based scaling.
+
+          "geometric":
+            Geometric scaling (default).
+
+          "curtisreid":
+            Curtis-reid scaling.
+
+
+        In addition, the following options may be passed as options
+        (e.g. ``scale_integers = True``).
+
+          scale_logarithmic:
+	    Scale to convergence using logarithmic mean of all values.
+
+          scale_userweight:
+            User can specify scalars (not implemented).
+
+          scale_power2:
+            Also do Power scaling (off by default).
+
+          scale_equilibrate: 
+            Make sure that no scaled number is above 1 (on by default).
+
+          scale_integers:
+            Scale integer variables (off by default).
+
+          scale_dynupdate: 
+            It has always been so that scaling is done only once on
+            the original model. If a solve is done again (most
+            probably after changing some data in the model), the
+            scaling factors aren't computed again. The scalars of the
+            original model are used. This is not always good,
+            especially if the data has changed considerably. If
+            scale_dynupdate is True, the scaling factors are
+            recomputed also when a restart is done. Note that they are
+            then always recalculated with each solve, even when no
+            change was made to the model, or a change that doesn't
+            influence the scaling factors like changing the RHS (Right
+            Hand Side) values or the bounds/ranges. This can influence
+            performance. It is up to you to decide if scaling factors
+            must be recomputed or not for a new solve, but by default
+            it still isn't so. It is possible to set/unset this flag
+            at each next solve and it is even allowed to choose a new
+            scaling algorithm between each solve. Note that the
+            scaling done by the scale_dynupdate is incremental and the
+            resulting scalars are typically different from scalars
+            recomputed from scratch. 
+
+          scale_rowsonly:
+            Scale only rows.
+            
+          scale_colsonly:
+            Scale only columns.
+
         Other miscilaneous options::
+        ========================================
+
 
           verbosity:
             Sets the verbosity level of printed information.  Default
@@ -745,12 +868,12 @@ cdef class LPSolve(object):
             
 
             # Test and see if it's a list of sequences or numerical list
-            is_list_sequence = self._isTupleList(<list>coefficients)
+            is_list_sequence = istuplelist(<list>coefficients)
 
             if is_list_sequence: 
                 is_numerical_sequence = False
             else:
-                is_numerical_sequence = self._isNumericalList(<list>coefficients)
+                is_numerical_sequence = isnumericlist(<list>coefficients)
             
             if is_list_sequence:
                 return self._addConstraintTupleList(<list>coefficients, ctype, rhs)
@@ -885,13 +1008,13 @@ cdef class LPSolve(object):
             # sequence of 2-tuples, intepret it this way 
             
             # Test and see if it's a list of sequences
-            is_list_sequence = self._isTupleList(<list>coefficients)
+            is_list_sequence = istuplelist(<list>coefficients)
 
             # Test and see if it's a list of scalars
             if is_list_sequence: 
                 is_numerical_sequence = False
             else:
-                is_numerical_sequence = self._isNumericalList(<list>coefficients)
+                is_numerical_sequence = isnumericlist(<list>coefficients)
 
             if is_list_sequence:
                 idx, val = self._getArrayPairFromTupleList(<list>coefficients)
@@ -1077,19 +1200,6 @@ cdef class LPSolve(object):
     # Helper functions for turning dictionaries or tuple-lists into an
     # index array + value array.
 
-    cdef bint _isTupleList(self, list l):
-        for t in l:
-            if type(t) is not tuple or len(<tuple>t) != 2:
-                return False
-
-        return True
-        
-    cdef bint _isNumericalList(self, list l):
-        for t in l:
-            if not isnumeric(t):
-                return False
-
-        return True
 
     cdef ar _attemptArrayList(self, list l):
 
@@ -1110,7 +1220,7 @@ cdef class LPSolve(object):
                 return None
 
             elif is_l:
-                if not self._isNumericalList(<list>t):
+                if not isnumericlist(<list>t):
                     return None
 
                 size = len(<list>t)
@@ -1315,8 +1425,184 @@ cdef class LPSolve(object):
 
     ############################################################
     # Now stuff for solving the model
+
+    cdef setupLP(self, dict option_dict):
         
-    def solve(self, mode = "minimize", **options):
+        cdef unsigned long n, presolve
+
+        # Stuff for the basis setting
+        cdef ar b, g
+        cdef ar[int, mode="c"]    start_basis 
+        cdef ar[double, mode="c"] guess_vect 
+
+        cdef size_t full_basis_size
+        cdef size_t basic_basis_size
+
+        ########################################
+        # Go through and configure things depending on the options
+
+        ####################
+        # Presolve
+        presolve = 0
+
+        for k, n in presolve_flags.iteritems():
+            if option_dict[k]:
+                presolve += n
+
+        ####################
+        # Pricing
+
+        pricer = option_dict["pricer"].lower()
+
+        if type(pricer) is not str or pricer not in pricer_lookup:
+            raise ValueError("pricer option must be one of %s."
+                             % (','.join(["'%s'" % p for p in pricer_lookup.iterkeys()])))
+
+        cdef int pricer_option = pricer_lookup[pricer]
+
+        # Now see if there are other flags in this mix
+        for k, n in pricer_flags.iteritems():
+            if option_dict[k]:
+                pricer_option += n
+
+
+        ####################
+        # Scaling
+
+        scaling = option_dict["scaling"].lower()
+
+        if type(scaling) is not str or scaling not in scaling_lookup:
+            raise ValueError("scaling option must be one of %s."
+                             % (','.join(["'%s'" % s for s in scaling_lookup.iterkeys()])))
+
+        cdef int scaling_option = scaling_lookup[scaling]
+
+        # Now see if there are other flags in this mix
+        for k, n in scaling_flags.iteritems():
+            if option_dict[k]:
+                scaling_option += n
+
+        ####################
+        # Verbosity
+
+        if option_dict["verbosity"] not in [1,2,3,4,5]:
+            raise ValueError("Verbosity level must be 1,2,3,4, or 5 (highest).")
+
+
+        # Options are vetted now; basis and others might not be 
+
+
+        ########################################
+        # Now set up the LP
+
+        if self.lp == NULL:
+            self.lp = make_lp(self.n_rows, self.n_columns)
+
+            if self.lp == NULL:
+                raise MemoryError("Out of memory creating internal LP structure.")
+        else:
+            if not resize_lp(self.lp, self.n_rows, self.n_columns):
+                raise MemoryError("Out of memory resizing internal LP structure.")
+            
+        ########################################
+        # Set all the options
+            
+        set_presolve(self.lp, presolve, 100)
+        set_pivoting(self.lp, pricer_option)
+        set_scaling(self.lp, scaling_option)
+        set_verbose(self.lp, option_dict["verbosity"])
+
+        ####################
+        # Constraints
+
+        self.applyAllConstraints()
+
+        ####################
+        # Variable Bounds
+
+        self.applyVariableBounds()
+
+        ####################
+        # Objective
+
+        self.applyObjective()
+
+
+        ####################
+        # Set the basis/guess
+
+        start_basis = None
+        guess_vect  = None
+
+        full_basis_size  = 1 + self.n_columns + self.n_rows
+        basic_basis_size = 1 + self.n_columns
+
+        # possibly set the start basis
+        if "basis" in option_dict:
+            basis = option_dict["basis"]
+
+            if type(basis) is ndarray:
+                b = basis
+            elif type(basis) is list:
+                b = array(basis)
+            else:
+                raise TypeError("Basis must be either ndarray or list.")
+
+
+            if b.ndim != 1 or b.shape[0] not in [full_basis_size, basic_basis_size]:
+                raise ValueError("Basis must be 1d array of length 1 + num_columns or 1 + num_columns+ num_rows")
+
+            if b.dtype != npint:
+                warnings.warn("Basis not an integer array/list, converting.")
+                start_basis = npint(b)
+            else:
+                start_basis = b.ravel()
+
+        elif "guess" in option_dict:
+            guess = option_dict["guess"]
+
+            if type(guess) is ndarray:
+                g = guess
+            elif type(guess) is list:
+                g = array(guess)
+            else:
+                raise TypeError("Guess must be either 1d ndarray or list.")
+
+            if g.ndim != 1 or g.shape[0] != self.n_columns:
+                raise ValueError("Guess must be 1d array of length num_columns.")
+
+            guess_vect = (npfloat(g)).ravel()
+
+            # Now try to create the basis
+            start_basis = empty(full_basis_size, npfloat)
+
+            if not guess_basis(self.lp, <double*>guess_vect.data, <int*>start_basis.data):
+
+                error_msg = "Finding starting basis from guess vector failed; discarding."
+
+                if option_dict["error_on_bad_guess"]:
+                    raise LPSolveException(error_msg)
+                else:
+                    warnings.warn(error_msg)
+
+                start_basis = None
+
+        # Now set the starting basis if it's not None, i.e. one of
+        # the previous versions succeeded
+
+        if start_basis is not None:
+            assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
+
+            set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
+
+
+        ####################
+        # Clear out all the temporary stuff 
+
+        self._clear(True)
+
+        
+    def solve(self, **options):
         """
         Solves the given model.  `mode` may be either "minimize"
         (default) or "maximize".
@@ -1356,196 +1642,30 @@ cdef class LPSolve(object):
         
         """
 
-        #set_add_rowmode(self.lp, True)
-        #set_add_rowmode(self.lp, False)
-        
+        ########################################
+        # Get the current options dict
+
+        cdef dict option_dict = self.getOptions()
+
+        # Make sure that the options given are all valid
+        cdef set okay_options = set(option_dict.iterkeys())
+        okay_options |= set(["basis", "guess"])
+
+        cdef str k, k1
+
+        for k, v in options.iteritems():
+            kl = k.lower()
+
+            if kl not in okay_options:
+                raise ValueError("Option '%s' not recognized." % k)
+
+            option_dict[kl] = v
+
         
         ########################################
         # Set up the LP
-
-        if self.lp == NULL:
-            self.lp = make_lp(self.n_rows, self.n_columns)
-
-            if self.lp == NULL:
-                raise MemoryError("Out of memory creating internal LP structure.")
-        else:
-            if not resize_lp(self.lp, self.n_rows, self.n_columns):
-                raise MemoryError("Out of memory resizing internal LP structure.")
-            
-        ####################
-        # Abort on bad options
-
-        cdef dict option_dict
-        cdef set okay_options
-
-        cdef str k, k1
-        cdef unsigned long n, presolve
-
-        cdef int pricer_option 
-
-        # Stuff for the basis setting
-        cdef ar b, g
-        cdef ar[int, mode="c"] start_basis 
-        cdef ar[double, mode="c"] guess_vect 
-
-        cdef size_t full_basis_size
-        cdef size_t basic_basis_size
-
-        try:
-            ########################################
-            # Get the current options dict
-
-            option_dict = self.getOptions()
-
-            # Make sure that the options given are all valid
-            okay_options = set(option_dict.iterkeys())
-            okay_options |= set(["basis", "guess"])
-
-            for k, v in options.iteritems():
-                kl = k.lower()
-
-                if kl not in okay_options:
-                    raise ValueError("Option '%s' not recognized." % k)
-
-                option_dict[kl] = v
-
-            ########################################
-            # Go through and configure things depending on the options
-
-            ####################
-            # Presolve
-            presolve = 0
-
-            for k, n in presolve_flags.iteritems():
-                if option_dict[k]:
-                    presolve += n
-
-            set_presolve(self.lp, presolve, 100)
-
-            ####################
-            # Pricing
-            pricer = option_dict["pricer"].lower()
-
-            if type(pricer) is not str or pricer not in pricer_lookup:
-                raise ValueError("pricer option must be one of %s."
-                                 % (','.join(["'%s'" % p for p in pricer_lookup.iterkeys()])))
-
-            pricer_option = pricer_lookup[pricer]
-
-            # Now see if there are other flags in this mix
-            for k, n in pricer_flags.iteritems():
-                if option_dict[k]:
-                    pricer_option += n
-
-            set_pivoting(self.lp, pricer_option)
-
-            ####################
-            # Verbosity
-
-            set_verbose(self.lp, option_dict["verbosity"])
-
-            ####################
-            # Set the minimize / maximize mode
-            
-            if mode.lower() not in ["maximize", "minimize"]:
-                raise ValueError("mode parameter must be either maximize or minimize.")
-
-            set_sense(self.lp, mode.lower() == "maximize")
-
-            ####################
-            # Constraints
-
-            self.applyAllConstraints()
-
-            ####################
-            # Variable Bounds
-
-            self.applyVariableBounds()
-
-            ####################
-            # Objective
-
-            self.applyObjective()
-
-
-            ####################
-            # Set the basis/guess
-
-            start_basis = None
-            guess_vect = None
-
-            full_basis_size  = 1 + self.n_columns + self.n_rows
-            basic_basis_size = 1 + self.n_columns
-
-            # possibly set the start basis
-            if "basis" in option_dict:
-                basis = option_dict["basis"]
-
-                if type(basis) is ndarray:
-                    b = basis
-                elif type(basis) is list:
-                    b = array(basis)
-                else:
-                    raise TypeError("Basis must be either ndarray or list.")
-
-
-                if b.ndim != 1 or b.shape[0] not in [full_basis_size, basic_basis_size]:
-                    raise ValueError("Basis must be 1d array of length 1 + num_columns or 1 + num_columns+ num_rows")
-
-                if b.dtype != npint:
-                    warnings.warn("Basis not an integer array/list, converting.")
-                    start_basis = npint(b)
-                else:
-                    start_basis = b.ravel()
-                
-            elif "guess" in option_dict:
-                guess = option_dict["guess"]
-                
-                if type(guess) is ndarray:
-                    g = guess
-                elif type(guess) is list:
-                    g = array(guess)
-                else:
-                    raise TypeError("Guess must be either 1d ndarray or list.")
-                
-                if g.ndim != 1 or g.shape[0] != self.n_columns:
-                    raise ValueError("Guess must be 1d array of length num_columns.")
-
-                guess_vect = (npfloat(g)).ravel()
-
-                # Now try to create the basis
-                start_basis = empty(full_basis_size, npfloat)
-
-                if not guess_basis(self.lp, <double*>guess_vect.data, <int*>start_basis.data):
-                    
-                    error_msg = "Finding starting basis from guess vector failed; discarding."
-                    
-                    if option_dict["error_on_bad_guess"]:
-                        raise LPSolveException(error_msg)
-                    else:
-                        warnings.warn(error_msg)
-                    
-                    start_basis = None
-
-            # Now set the starting basis if it's not None, i.e. one of
-            # the previous versions succeeded
-
-            if start_basis is not None:
-                assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
-
-                set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
-        finally:
-            pass
-
-        #except Exception, e:
-        #    delete_lp(self.lp)
-        #    self.lp = NULL
-        #    raise e
-
-        ####################
-        # Clear out all the temporary stuff 
-
-        self._clear(True)
+        
+        self.setupLP(option_dict)
 
         #self.print_lp()
 
@@ -1697,11 +1817,9 @@ cdef class LPSolve(object):
 
     cpdef print_lp(self):
 
-        if self.lp == NULL:
-            raise LPSolveException("Final variables available only after solve() is called.")
-
+        self.setupLP(self.getOptions())
         print_lp(self.lp)
-
+        
 
     ############################################################
     # Methods for dealing with the constraint buffers
@@ -1784,6 +1902,9 @@ cdef class LPSolve(object):
         cdef size_t i, j
         cdef _Constraint *buf
 
+        # turn on row adding mode
+        set_add_rowmode(self.lp, True)
+
         # This enables the slicing to work properly
         cdef int* countrange = <int*>malloc((self.n_columns+1)*sizeof(int))
 
@@ -1802,6 +1923,9 @@ cdef class LPSolve(object):
                     setInLP(&buf[j], self.lp, self.n_columns, countrange)
 
         free(countrange)
+
+        # Turn off row adding mode
+        set_add_rowmode(self.lp, False)
 
     cdef void clearConstraintBuffers(self):
 
