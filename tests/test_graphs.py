@@ -5,7 +5,7 @@ from numpy import array, ones, eye, float64, uint, zeros
 
 from pylpsolve.graphs import graphCut
 
-class TestGraphs(unittest.TestCase):
+class TestGraphCuts(unittest.TestCase):
 
     def checkCut(self, d, source, sink, answer, opts):
 
@@ -114,7 +114,7 @@ class TestGraphs(unittest.TestCase):
     def testGraphCut02_tfa(self): self.checkCut(self.graph_02, 0, 5, self.answer_02, "tfa")
 
     ############################################################
-    # Now testing for bad things happening
+    # Now testing for bad things happening with the graph cuts
 
     def testGraphCutBad_ArrayNonSquare(self):
         self.assertRaises(ValueError, lambda: graphCut(array([[0,1], [1,0], [0,0]]), 0,1)) 
@@ -154,6 +154,13 @@ class TestGraphs(unittest.TestCase):
         self.assertRaises(ValueError, lambda:self.checkCut(self.graph_bad_01, 0, 5, self.answer_bad_01, "ta"))
     def testGraphCut_bad_bad_01_tfa(self): 
         self.assertRaises(ValueError, lambda:self.checkCut(self.graph_bad_01, 0, 5, self.answer_bad_01, "tfa"))
+
+
+class TestPotentialMaximizing(unittest.TestCase):
+
+    def checkPFunc(self):
+        pass
+        
 
 if __name__ == '__main__':
     unittest.main()

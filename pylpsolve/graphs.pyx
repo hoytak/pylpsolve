@@ -61,27 +61,46 @@ cdef inline bint isnumericlist(list l):
 
     return True
 
-cdef inline bint is2dlist(list l):
+cdef inline bint isnumerictuple(tuple t):
+    for e in t:
+        if not isnumeric(e):
+            return False
+
+    return True
+
+cdef inline bint isposintlist(list l):
+    for t in l:
+        if not isposintlist(t):
+            return False
+
+    return True
+
+cdef inline bint is2dlist(list l, bint tuple_okay):
     cdef int length = -1
 
     for ll in l:
-        if not isnumericlist(ll):
-            return False
+        if tuple_okay:
+            if not ((type(ll) is list and isnumericlist(ll)) 
+                    or (type(ll) is tuple and isnumerictuple(ll))):
+                return False
+        else:
+            if not (type(ll) is list and isnumericlist(ll)):
+                return False
+
         if length == -1:
             length = len(<list>ll)
         else:
             if length != len(<list>ll):
                 return False
+
     else:
         return True
         
 
+################################################################################
+# Graph Cuts
 
-########################################
-# Set the proper types
-
-
-cpdef graphCut(graph, int source, int sink):
+def graphCut(graph, int source, int sink):
     """
     Performs a graph cut on the graph specified by `graph`, returning
     a labeling of the vertices.  The vertices are integers, with ``0 <= vertex < nV``.
@@ -127,7 +146,7 @@ cpdef graphCut(graph, int source, int sink):
         return graphCutSparse(nz[0], nz[1], graph[nz], source, sink)
 
     elif type(graph) is list:
-        if not is2dlist(graph) or len(graph) != len(graph[0]):
+        if not is2dlist(graph, False) or len(graph) != len(graph[0]):
             raise ValueError("Graph specified by list of lists must be 2d and square.")
  
         # bump it back
@@ -168,11 +187,6 @@ cpdef graphCut(graph, int source, int sink):
 
 cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity, 
                     int source, int sink):
-    """
-    Performs a graph cut on the graph defined by `origin_indices`,
-    `dest_indices`, and `capacity`. 
-
-    """
 
     # Sort the imput sources, cause that makes several parts of the
     # algorithms easier
@@ -318,7 +332,6 @@ cdef inline ar make_mapping(ar A_o, size_t nV, size_t nE):
 
 
 # Easiest to do this recursively
-    
 cdef labelGraphSource(int *labels, unsigned int *mapping_S, 
                       int *S, int *D, double *x,
                       int set_node, size_t nE):
@@ -374,3 +387,271 @@ cdef labelGraphSink(int *labels, unsigned int *mapping_D,
                 labelGraphSink(labels, mapping_D, S, D, x, S[cur_edge], nE)
 
         cur_edge += 1
+
+################################################################################
+# Potential Function Potentials
+
+def maximimzeGraphPotential(E1, E2):
+    """
+    Maximizes a potential function defined by weights on nodes and
+    interactions between nodes.  The nodes may be either 0 or 1, and
+    the potential function must be of the form:
+
+    .. math::
+       \sum_{i,j} E_{ij}(v_i, v_j) + \sum_{i} E_i(v_i)
+    
+    where E_i(v_i) is given by `E1` and E_{ij} is specified by `E2`.
+
+    Additionally, E_{ij}(v_i, v_j) must satisfy the following
+    regularity condition:
+
+    .. math::
+       E_{ij}(0,1) + E_{ij}(1,0) \leq E_{ij}(0,0) + E_{ij}(1,1)
+
+    The problem is NP-hard in the number of energy potentials that do
+    not satisfy this constructions (See [REF]).
+
+    `E1` must be a 1d vector or list giving the weights on the nodes
+    being on.  Note that the problem is not changed by scaling with a
+    constant factor, so the difference between energies of a node
+    being on and off is sufficient for the problem.
+
+    `E2` can be:
+
+    - A tuple of 3 arrays or lists.  
+
+      The first arrays/lists must be 1d with respective elements
+      giving the two vertices of the edge.  If they are given as a
+      single array, then it must be n x 2, with the vertices given in
+      the second element.
+
+      The third array/list specifies the 4 values of the potential
+      function in the order (0,0), (0,1), (1,0), (1,1).  Thus it must
+      either be a list of lists or tuples, or a 2d array, with the
+      second/inner dimension specifying the 4 elements.
+
+    - A dictionary. with tuples for keys and lists, tuples, or arrays
+      for the values.  In this case, the keys must be 2-tuples
+      specifying the two vertices.  The values must be lists, tuples,
+      or arrays of length 4 giving the 4 values of the potential
+      function.
+
+    The value returned is 1d array with 0 or 1 giving the best value
+    of the potential function, or -1 if it doesn't matter.
+    """
+
+    cdef size_t i
+    cdef tuple t
+    cdef list l
+    cdef ar a1, a2, a3
+    cdef ar[unsigned int, mode="c"] va1, va2
+    cdef ar[double, ndim=2] E2a
+    cdef ar[unsigned int, mode="c"] E1a
+    cdef dict d
+
+    ########################################
+    # Validate E1
+
+    if type(E1) is list:
+        if not isnumericlist(E1):
+            raise ValueError("E1 must be 1d array or numeric list.")
+
+        E1a = array(E1, npfloat)
+
+    elif type(E1) is ndarray:
+        a1 = (<ar>E1)
+
+        if a1.ndim != 1:
+            raise ValueError("E1 must be 1d array or numeric list.")
+
+        E1a = asarray(E1, npfloat).ravel()
+    elif E1 is None:
+        E1a = None
+    else:
+        raise ValueError("E1 must be 1d array or numeric list.")
+        
+
+    ########################################
+    # Validate E2
+
+    if type(E2) is tuple:
+        t = <tuple>E2
+
+        if len(t) != 3:
+            raise ValueError("E2 must be specified by a 3-tuple or dict.")
+        
+        if type(t[0]) is list:
+            l = <list>(t[0])
+            if not isposintlist(l):
+                raise ValueError("First vertex list must be list of positive integers.")
+                
+            va1 = array(l, npuint)
+
+        elif type(t[0]) is ndarray:
+            a1 = t[0]
+            
+            if a1.ndim != 1:
+                raise ValueError("First vertex array must be 1d")
+
+            va1 = asarray(a1, npuint).ravel()
+        else:
+            raise ValueError("Second vertex list must be either 1d array or list.")
+
+        if type(t[1]) is list:
+            l = <list>(t[1])
+            if not isposintlist(l):
+                raise ValueError("Second vertex list must be list of positive integers.")
+                
+            va2 = array(l, npuint)
+        elif type(t[1]) is ndarray:
+            a2 = t[1]
+            
+            if a2.ndim != 1:
+                raise ValueError("Second vertex array must be 1d")
+
+            va2 = asarray(a2, npuint).ravel()
+        else:
+            raise ValueError("Second vertex list must be either 1d array or list.")
+        
+        
+        # Now validate the following 
+
+        if type(t[2]) is ndarray:
+            a3 = asarray(t[2], npfloat)
+
+            if a3.ndim != 2:
+                raise ValueError("Potentail function potential array must be 2d")
+            
+            if a3.shape[0] != 4:
+                raise ValueError("Second dimension of potential function array must have size 4.")
+            
+            E2a = a3
+        elif type(t[2]) is list:
+            if not is2dlist(<list>t[2], True):
+                raise ValueError("Potential function must be specified by lists of lists or tuples, or a 2d array.")
+            
+            E2a = array(t[2], npfloat)
+        else:
+            raise ValueError("Potential function must be specified by lists of lists or tuples, or a 2d array.")
+
+    elif type(E2) is dict:
+        d = <dict>E2
+        
+        n = len(d)
+        
+        va1 = empty(n, npuint)
+        va2 = empty(n, npuint)
+        E2a = empty( (n, 4), npfloat)
+
+        for i, (k, v) in enumerate(d.iteritems()):
+            if type(k) is not tuple or len(<tuple>k) != 2:
+                raise ValueError("Keys in potential function dictionary must be 2-tuples specifying vertices.")
+            
+            if not (type(v) is tuple or type(v) is list) or len(v) != 4:
+                raise ValueError("Values in potential function dictionary must be lists or tuples of size 4.")
+            
+            v1, v2 = <tuple>k
+
+            if not (isposint(v1) and isposint(v2)):
+                raise ValueError("Indices in key must be positive integers.")
+            
+            va1[i] = v1
+            va2[i] = v2
+            
+            if not (isnumeric(v[0]) and isnumeric(v[1]) and isnumeric(v[2]) and isnumeric(v[3])):
+                raise ValueError("Potential function values must be numeric.")
+
+            E2a[i, 0] = v[0]
+            E2a[i, 1] = v[1]
+            E2a[i, 2] = v[2]
+            E2a[i, 3] = v[3]
+
+    elif E2 is None:
+        if E1 is None:
+            raise ValueError("E1 and E2 cannot both be None.")
+        
+        ret = empty(E1a.shape[0], npint)
+        
+        ret[E1a > 0] = 1
+        ret[E1a < 0] = 0
+        ret[E1a == 0] = -1
+
+        return ret
+
+    else:
+        raise ValueError("E2 must be either 3-tuple or dict.")
+
+
+    # We now have E1a, va1, va2, and E2a.  Now create the Ising model.
+
+    # first create an array of 
+    
+    if not (va1.shape[0] == va2.shape[0] == E2a.shape[0]):
+        raise ValueError("Index arrays and potential function specifications must be same length.")
+
+    cdef size_t nV = max(va1.max(), va2.max()) + 1
+    cdef size_t nE = va1.shape[0]
+
+    if E1a is not None and E1a.shape[0] != nV:
+        raise ValueError("Length of E1 (%d) must equal the number of vertices (%d), as deduced from labels in E2." % (E1a.shape[0], nV))
+
+    # Create the edge lists; see REF for details
+
+    cdef ar[unsigned int, mode="c"] S = empty(nE + 2*nV, npuint)
+    cdef ar[unsigned int, mode="c"] D = empty(nE + 2*nV, npuint)
+    cdef ar[double, mode="c"]       C = zeros(nE + 2*nV, npfloat)
+
+    cdef size_t source = nV
+    cdef size_t sink   = nV + 1
+
+    # Set up the indices
+    for 0 <= i < nV:
+        S[i]      = va1[i]
+        D[i]      = va2[i]
+        
+        S[nE + i] = source
+        D[nE + i] = i
+
+        S[nE + nV + i] = i
+        D[nE + nV + i] = sink 
+
+    # Set up the individual energy functions
+    if E1a is not None:
+        for 0 <= i < nV:
+            if E1a[i] < 0:
+                # node from vertex to sink
+                C[nE + nV + i] += -E1a[i] 
+            elif E1a[i] > 0:
+                # Node from source to vertex
+                C[nE + i] += E1a[i]
+    
+    cdef double w, vi, vj
+
+    # Set up the inter-node energy functions
+    for 0 <= i < nE:
+        w = E2a[i, 0] + E2a[i, 3] - E2a[i, 1] - E2a[i,2]
+
+        if w < 0:
+            raise ValueError("Potential function of edge %d is not regular." % i)
+
+        C[i] += w
+
+        vi = E2a[i, 0] - E2a[i, 2] 
+        vj = E2a[i, 2] - E2a[i, 3] 
+        
+        if vi > 0:
+            # Node from source to vertex
+            C[nE + S[i]] += vi
+        else:
+            C[nE + nV + S[i]] += -vi
+
+        if vj > 0:
+            # Node from source to vertex
+            C[nE + D[i]] += vj
+        else:
+            C[nE + nV + D[i]] += -vj
+
+    return graphCutSparse(S,D,C,source,sink)[:-2]
+
+
+
