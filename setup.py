@@ -3,7 +3,7 @@
 ################################################################################
 # All the control parameters should go here
 
-debug_mode_c_code = True
+debug_mode_c_code = False
 
 source_directory_list = ['pylpsolve']
 compiler_args = []

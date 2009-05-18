@@ -3,7 +3,7 @@ from copy import deepcopy, copy
 from pylpsolve import LPSolve, LPSolveException
 from numpy import array, ones, eye, float64, uint, zeros
 
-from pylpsolve.graphs import graphCut
+from pylpsolve.graphs import graphCut, maximimzeGraphPotential
 
 class TestGraphCuts(unittest.TestCase):
 
@@ -136,6 +136,7 @@ class TestGraphCuts(unittest.TestCase):
         (3,5) : -2,
         (4,5) : 5,
         (5,5) : 10,
+
         (6,6) : 1,
         (6,7) : 2,
         (7,8) : 1}
@@ -158,8 +159,170 @@ class TestGraphCuts(unittest.TestCase):
 
 class TestPotentialMaximizing(unittest.TestCase):
 
-    def checkPFunc(self):
-        pass
+    def checkPFunc(self, E1, E2, answer, opts):
+        
+        s_edges = [i for i,j in E2.iterkeys()]
+        d_edges = [j for i,j in E2.iterkeys()]
+        E2v      = E2.values()
+        
+        nV = max(max(s_edges), max(d_edges)) + 1
+
+        def makeArray():
+            A = zeros( (nV, nV, 4), dtype=float64)
+
+            for (i, j), c in E2.iteritems():
+                A[i,j, :] = array(c)
+
+            return A
+                
+
+        E1d = {}
+        
+        E1d["l"] = list(E1)
+        E1d["a"] = array(E1)
+
+        E2d = {}
+
+        E2d["l"] = (s_edges, d_edges, E2v)
+        E2d["a"] = (array(s_edges, uint), array(d_edges,uint), array(E2v))
+        E2d["L"] = (s_edges, d_edges, array(E2v))
+        E2d["f"] = (array(s_edges, float64), array(d_edges, float64), array(E2v))
+        E2d["A"] = makeArray()
+        E2d["S"] = makeArray() + makeArray().transpose(1,0,2)
+        E2d["d"] = E2
+
+        ret = maximimzeGraphPotential(E1d[opts[0]], E2d[opts[1]])
+
+        self.assert_(len(ret) == len(answer))
+
+        for re, ae in zip(ret, answer):
+            self.assert_(re == ae, "%s != %s (true)" % (str(ret), str(answer)))
+
+    ising_01_E2 = {
+        (0,1) : (10,0,0,10),
+        (1,2) : (5,0,0,5),
+        (2,3) : (1,0,0,1),   # should break here
+        (3,4) : (5,0,0,5),
+        (4,5) : (10,0,0,10)}
+
+    ising_01_E1 = [10, 0, 0, 0, 0, -10] 
+        
+    ising_01_answer = [1,1,1,0,0,0]
+
+
+    def testSimpleIsing_01_ll(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "ll")
+    def testSimpleIsing_01_la(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "la")
+    def testSimpleIsing_01_lL(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "lL")
+    def testSimpleIsing_01_lf(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "lf")
+    def testSimpleIsing_01_lA(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "lA")
+    def testSimpleIsing_01_lS(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "lS")
+    def testSimpleIsing_01_ld(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "ld")
+
+    def testSimpleIsing_01_al(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "al")
+    def testSimpleIsing_01_aa(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "aa")
+    def testSimpleIsing_01_aL(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "aL")
+    def testSimpleIsing_01_af(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "af")
+    def testSimpleIsing_01_aA(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "aA")
+    def testSimpleIsing_01_aS(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "aS")
+    def testSimpleIsing_01_ad(self):
+        self.checkPFunc(self.ising_01_E1, self.ising_01_E2, self.ising_01_answer, "ad")
+
+
+    ising_02_E2 = {
+        (1,0) : (10,0,0,10),
+        (2,1) : (5,0,0,5),
+        (3,2) : (1,0,0,1),   # should break here
+        (4,3) : (5,0,0,5),
+        (5,4) : (10,0,0,10)}
+
+    ising_02_E1 = [10, 0, 0, 0, 0, -10] 
+        
+    ising_02_answer = [1,1,1,0,0,0]
+
+    def testSimpleIsing_02_ll(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "ll")
+    def testSimpleIsing_02_la(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "la")
+    def testSimpleIsing_02_lL(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "lL")
+    def testSimpleIsing_02_lf(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "lf")
+    def testSimpleIsing_02_lA(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "lA")
+    def testSimpleIsing_02_lS(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "lS")
+    def testSimpleIsing_02_ld(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "ld")
+
+    def testSimpleIsing_02_al(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "al")
+    def testSimpleIsing_02_aa(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "aa")
+    def testSimpleIsing_02_aL(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "aL")
+    def testSimpleIsing_02_af(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "af")
+    def testSimpleIsing_02_aA(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "aA")
+    def testSimpleIsing_02_aS(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "aS")
+    def testSimpleIsing_02_ad(self):
+        self.checkPFunc(self.ising_02_E1, self.ising_02_E2, self.ising_02_answer, "ad")
+
+
+    ising_03_E2 = {
+        (1,0) : (10,0,0,10),
+        (2,1) : (0,0,0,0),   # 
+        (4,3) : (0,0,0,0),   #
+        (5,4) : (10,0,0,10)}
+
+    ising_03_E1 = [1e-8, 0, 0, 0, 0, -1e-8]
+        
+    ising_03_answer = [1,1,-1,-1,0,0]
+
+    def testSimpleIsing_03_ll(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "ll")
+    def testSimpleIsing_03_la(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "la")
+    def testSimpleIsing_03_lL(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "lL")
+    def testSimpleIsing_03_lf(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "lf")
+    def testSimpleIsing_03_lA(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "lA")
+    def testSimpleIsing_03_lS(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "lS")
+    def testSimpleIsing_03_ld(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "ld")
+
+    def testSimpleIsing_03_al(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "al")
+    def testSimpleIsing_03_aa(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "aa")
+    def testSimpleIsing_03_aL(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "aL")
+    def testSimpleIsing_03_af(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "af")
+    def testSimpleIsing_03_aA(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "aA")
+    def testSimpleIsing_03_aS(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "aS")
+    def testSimpleIsing_03_ad(self):
+        self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "ad")
+
         
 
 if __name__ == '__main__':

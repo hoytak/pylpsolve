@@ -16,6 +16,8 @@ from typeconfig import npint, npuint, npfloat
 
 # this works
 
+cdef double eps = 10e-12
+
 ############################################################
 # Miscilaneous utility functions for resolving types
 
@@ -70,7 +72,7 @@ cdef inline bint isnumerictuple(tuple t):
 
 cdef inline bint isposintlist(list l):
     for t in l:
-        if not isposintlist(t):
+        if not isposint(t):
             return False
 
     return True
@@ -219,6 +221,9 @@ cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity,
         D = D[keep_idx]
         C = C[keep_idx]
 
+    # Normalize the C so the cut we do for numerical stability works
+    C /= C.mean()
+
     cdef size_t nE = S.shape[0], nV = max(S[-1], D.max()) + 1
 
     if source > nV or source < 0:
@@ -274,7 +279,7 @@ cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity,
 
     lp.setObjective( (xblock, C) )
 
-    lp.solve()
+    lp.solve(scale_integers=False,scaling="extreme")
 
     cdef ar[double, mode="c"] x = lp.getSolution(xblock)
     
@@ -288,27 +293,28 @@ cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity,
     labels[:] = -1  # not set
 
     ##############################
-    # First label all the ones in the source, up to the graph cut
+    # First label all the ones in the source, up to the graph cut Then
+    # go backwards from sink to source, up to the graph cut. 
 
+    # Working S -> D
     # construct a mapping on the S indices
+
     cdef ar[unsigned int, mode="c"] mapping = make_mapping(S, nV, nE)
 
-    labelGraphSource(<int*>labels.data, <unsigned int*> mapping.data,
-                     <int*>S.data, <int*>D.data, <double*> x.data, source, nE)
+    labelGraph(<int*>labels.data, <unsigned int*> mapping.data,
+                <int*>S.data, <int*>D.data, <double*> x.data, source, nE, 1)
 
-    ########################################
-    # Now go backwards from sink to source, up to the graph cut
-
-    # Go back to the nodes
+    # Working D -> S
     D_idxmap = argsort(D)
     S = S[D_idxmap]
     D = D[D_idxmap]
+    C = C[D_idxmap]
     x = x[D_idxmap]
     
     mapping = make_mapping(D, nV, nE)
 
-    labelGraphSink(<int*>labels.data, <unsigned int*> mapping.data,
-                    <int*>S.data, <int*>D.data, <double*>x.data, sink, nE)
+    labelGraph(<int*>labels.data, <unsigned int*> mapping.data,
+                <int*>D.data, <int*>S.data, <double*>x.data, sink, nE, 0)
     
     return labels
 
@@ -329,14 +335,15 @@ cdef inline ar make_mapping(ar A_o, size_t nV, size_t nE):
 
     return mapping
 
-
-
 # Easiest to do this recursively
-cdef labelGraphSource(int *labels, unsigned int *mapping_S, 
+cdef labelGraph(int *labels, unsigned int *mapping_S, 
                       int *S, int *D, double *x,
-                      int set_node, size_t nE):
+                      int set_node, size_t nE, int label):
 
-    labels[set_node] = 1
+    if labels[set_node] == label:
+        return
+
+    labels[set_node] = label
 
     cdef unsigned int cur_edge = mapping_S[set_node]
 
@@ -349,44 +356,14 @@ cdef labelGraphSource(int *labels, unsigned int *mapping_S,
 
         dest_label = labels[D[cur_edge]]
 
-        if x[cur_edge] == 0:
+        if x[cur_edge] <= eps:
             # It's not part of the cut
+            assert dest_label in [-1, label]
             
-            assert dest_label in [-1, 1]
-
-            if dest_label == -1:
-                labelGraphSource(labels, mapping_S, S, D, x, D[cur_edge], nE)
+            labelGraph(labels, mapping_S, S, D, x, D[cur_edge], nE, label)
 
         cur_edge += 1
 
-
-cdef labelGraphSink(int *labels, unsigned int *mapping_D, 
-                    int *S, int *D, double *x,
-                    int set_node, size_t nE):
-
-    labels[set_node] = 0
-
-    # work backwards, now on D -> S
-    cdef unsigned int cur_edge = mapping_D[set_node]
-
-    if cur_edge == nE:  # Not connected to anything
-        return
-
-    cdef int dest_label
-
-    while D[cur_edge] == set_node:
-        
-        dest_label = labels[S[cur_edge]]
-
-        if x[cur_edge] == 0:
-            # It's not part of the cut
-            
-            assert dest_label in [-1, 0]
-
-            if dest_label == -1:
-                labelGraphSink(labels, mapping_D, S, D, x, S[cur_edge], nE)
-
-        cur_edge += 1
 
 ################################################################################
 # Potential Function Potentials
@@ -436,18 +413,28 @@ def maximimzeGraphPotential(E1, E2):
       or arrays of length 4 giving the 4 values of the potential
       function.
 
+    - A nV x nV x 4 array, where the (i,j) 4-vector specifies the
+      potential function between the ith and jth vertices.  Only the
+      upper triangle, i < j, is considered, as the matrix should be
+      symmetric.
+
     The value returned is 1d array with 0 or 1 giving the best value
     of the potential function, or -1 if it doesn't matter.
     """
 
-    cdef size_t i
+    cdef size_t i, ii
     cdef tuple t
     cdef list l
     cdef ar a1, a2, a3
     cdef ar[unsigned int, mode="c"] va1, va2
+    cdef ar[int, mode="c"] va1i, va2i
     cdef ar[double, ndim=2] E2a
-    cdef ar[unsigned int, mode="c"] E1a
+    cdef ar[double, mode="c"] E1a
     cdef dict d
+    cdef ar[double, ndim=3] A3
+
+    cdef bint comp_0, comp_eq
+    cdef unsigned int v1, v2
 
     ########################################
     # Validate E1
@@ -513,16 +500,14 @@ def maximimzeGraphPotential(E1, E2):
         else:
             raise ValueError("Second vertex list must be either 1d array or list.")
         
-        
         # Now validate the following 
-
         if type(t[2]) is ndarray:
             a3 = asarray(t[2], npfloat)
 
             if a3.ndim != 2:
                 raise ValueError("Potentail function potential array must be 2d")
             
-            if a3.shape[0] != 4:
+            if a3.shape[1] != 4:
                 raise ValueError("Second dimension of potential function array must have size 4.")
             
             E2a = a3
@@ -566,6 +551,56 @@ def maximimzeGraphPotential(E1, E2):
             E2a[i, 2] = v[2]
             E2a[i, 3] = v[3]
 
+    elif type(E2) is ndarray:
+        a1 = <ar>E2
+
+        if a1.ndim != 3 or a1.shape[2] != 4 or a1.shape[0] != a1.shape[1]:
+            raise ValueError("Potential function array must be nV x nV x 4.")
+
+        A3 = a1
+
+        # Convert it to the proper sparse interpretation
+        va1i, va2i = nonzero( (A3[:,:,0] != 0) | (A3[:,:,1] != 0) 
+                              | (A3[:,:,2] != 0) | (A3[:,:,3] != 0) )
+        
+        # Now we need to check that if (i,j) is valid, then element
+        # (j,i) is either 0 or equal:
+
+        va1 = empty(va1i.shape[0], npuint)
+        va2 = empty(va1i.shape[0], npuint)
+        ii = 0
+
+        for 0 <= i < va1i.shape[0]:
+            v1 = va1i[i]
+            v2 = va2i[i]
+
+            if v1 == v2: 
+                continue
+
+            comp_0  = (A3[v2,v1,0] == A3[v2,v1,1] == A3[v2,v1,2] == A3[v2,v1,3] == 0)
+            comp_eq = (A3[v2,v1,0] == A3[v1,v2,0] and A3[v2,v1,1] == A3[v1,v2,1]
+                        and A3[v2,v1,2] == A3[v1,v2,2] and A3[v2,v1,3] == A3[v1,v2,3])
+
+            if not (comp_0 or comp_eq):
+                raise ValueError("Matrix form of E2 must be either symmetric or only one of E2[i,j,:] and E2[j,i,:] must be nonzero (i=%d,j=%d)." % (v1, v2))
+            
+            if comp_0 or comp_eq and v1 < v2:
+                va1[ii] = v1
+                va2[ii] = v2
+                ii += 1
+
+        # Trim
+        va1 = va1[:ii]
+        va2 = va2[:ii]
+
+        E2a = empty( (va1.shape[0], 4), npfloat)
+
+        for 0 <= i < va1.shape[0]:
+            E2a[i, 0] = A3[va1[i], va2[i], 0]
+            E2a[i, 1] = A3[va1[i], va2[i], 1]
+            E2a[i, 2] = A3[va1[i], va2[i], 2]
+            E2a[i, 3] = A3[va1[i], va2[i], 3]
+
     elif E2 is None:
         if E1 is None:
             raise ValueError("E1 and E2 cannot both be None.")
@@ -589,7 +624,7 @@ def maximimzeGraphPotential(E1, E2):
     if not (va1.shape[0] == va2.shape[0] == E2a.shape[0]):
         raise ValueError("Index arrays and potential function specifications must be same length.")
 
-    cdef size_t nV = max(va1.max(), va2.max()) + 1
+    cdef size_t nV = max(va1.max(), va2.max(), 0 if E1a is None else E1a.shape[0] - 1) + 1
     cdef size_t nE = va1.shape[0]
 
     if E1a is not None and E1a.shape[0] != nV:
@@ -604,11 +639,8 @@ def maximimzeGraphPotential(E1, E2):
     cdef size_t source = nV
     cdef size_t sink   = nV + 1
 
-    # Set up the indices
+    # Set up the indices regarding source and sink
     for 0 <= i < nV:
-        S[i]      = va1[i]
-        D[i]      = va2[i]
-        
         S[nE + i] = source
         D[nE + i] = i
 
@@ -625,31 +657,33 @@ def maximimzeGraphPotential(E1, E2):
                 # Node from source to vertex
                 C[nE + i] += E1a[i]
     
-    cdef double w, vi, vj
+    cdef double w, CmA, CmD
 
     # Set up the inter-node energy functions
     for 0 <= i < nE:
-        w = E2a[i, 0] + E2a[i, 3] - E2a[i, 1] - E2a[i,2]
+
+        CmA = E2a[i, 0] - E2a[i, 2]   # Reversed from the paper
+        CmD = E2a[i, 3] - E2a[i, 2]
+
+        w = -E2a[i, 1] - E2a[i,2] + E2a[i,0] + E2a[i,3]
 
         if w < 0:
             raise ValueError("Potential function of edge %d is not regular." % i)
 
         C[i] += w
+        S[i] = va1[i] 
+        D[i] = va2[i]
 
-        vi = E2a[i, 0] - E2a[i, 2] 
-        vj = E2a[i, 2] - E2a[i, 3] 
-        
-        if vi > 0:
-            # Node from source to vertex
-            C[nE + S[i]] += vi
-        else:
-            C[nE + nV + S[i]] += -vi
+        # Now we need to set the graph so it flows from source to sink
+        if CmA > 0:
+            C[nE + S[i]] += CmA
+        elif CmA < 0:
+            C[nE + D[i]] += -CmA
 
-        if vj > 0:
-            # Node from source to vertex
-            C[nE + D[i]] += vj
+        if CmD > 0:
+            C[nE + nV + D[i]] += CmD
         else:
-            C[nE + nV + D[i]] += -vj
+            C[nE + nV + S[i]] += -CmD
 
     return graphCutSparse(S,D,C,source,sink)[:-2]
 
