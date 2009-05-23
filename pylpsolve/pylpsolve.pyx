@@ -805,15 +805,17 @@ cdef class LPSolve(object):
         return idxblock.ndim == 2
 
     cdef size_t _indexBlockLower(self, ar idxblock):
-        assert idxblock.ndim == 1
+        assert idxblock.ndim == 2
         assert idxblock.shape[0] == 1
         assert idxblock.shape[1] == 2
+        assert (<size_t*>idxblock.data)[0] == idxblock[0,0]
         return (<size_t*>idxblock.data)[0]
 
     cdef size_t _indexBlockUpper(self, ar idxblock):
-        assert idxblock.ndim == 1
+        assert idxblock.ndim == 2
         assert idxblock.shape[0] == 1
         assert idxblock.shape[1] == 2
+        assert (<size_t*>idxblock.data)[1] == idxblock[0,1]
         return (<size_t*>idxblock.data)[1]
 
     cdef _validateIndexTuple(self, tuple t):
@@ -1022,7 +1024,7 @@ cdef class LPSolve(object):
     ############################################################
     # Convenience functions dealing with common constraint types
 
-    def bindEach(self, index_group_1, str ctype, index_group_2):
+    def bindEach(self, indices_1, str ctype, indices_2):
         """
         Constrains each variable in `index_group_1` by the
         corresponding variable in `index_group_2` using the ctype
@@ -1041,8 +1043,8 @@ cdef class LPSolve(object):
         """
         cdef list row_index_list
 
-        cdef bint idx_b1_is_known = self._isCurrentIndexBlock(index_group_1)
-        cdef bint idx_b2_is_known = self._isCurrentIndexBlock(index_group_2)
+        cdef bint idx_b1_is_known = self._isCurrentIndexBlock(indices_1)
+        cdef bint idx_b2_is_known = self._isCurrentIndexBlock(indices_2)
         
         cdef ar idx_block_1_raw, idx_block_2_raw 
         cdef size_t idx_block_1_size, idx_block_2_size
@@ -1054,24 +1056,23 @@ cdef class LPSolve(object):
             raise ValueError("Both index groups implicitly defined.")
 
         elif idx_b1_is_known and not idx_b2_is_known:
-            idx_block_1_raw = self._resolveIdxBlock(idx_block_1_raw, 1)
+            idx_block_1_raw = self._resolveIdxBlock(indices_1, 1)
             idx_block_1_size = self._indexBlockSize(idx_block_1_raw)
-            idx_block_2_raw = self._resolveIdxBlock(idx_block_2_raw, idx_block_1_size)
+            idx_block_2_raw = self._resolveIdxBlock(indices_2, idx_block_1_size)
             idx_block_2_size = self._indexBlockSize(idx_block_2_raw)
 
         elif not idx_b1_is_known and idx_b2_is_known:
-            idx_block_2_raw = self._resolveIdxBlock(idx_block_2_raw, 1)
+            idx_block_2_raw = self._resolveIdxBlock(indices_2, 1)
             idx_block_2_size = self._indexBlockSize(idx_block_2_raw)
-            idx_block_1_raw = self._resolveIdxBlock(idx_block_1_raw, idx_block_2_size)
+            idx_block_1_raw = self._resolveIdxBlock(indices_1, idx_block_2_size)
             idx_block_1_size = self._indexBlockSize(idx_block_1_raw)
 
         else:
-            idx_block_2_raw = self._resolveIdxBlock(idx_block_2_raw, 1)
+            idx_block_2_raw = self._resolveIdxBlock(indices_2, 1)
             idx_block_2_size = self._indexBlockSize(idx_block_2_raw)
-            idx_block_1_raw = self._resolveIdxBlock(idx_block_1_raw, 1)
+            idx_block_1_raw = self._resolveIdxBlock(indices_1, 1)
             idx_block_1_size = self._indexBlockSize(idx_block_1_raw)
             
-
         if idx_block_1_size != idx_block_2_size:
             raise ValueError("Index blocks have inconsistent sizes.")
 
@@ -1086,13 +1087,11 @@ cdef class LPSolve(object):
 
         cdef size_t i
 
-        cdef ar[uint_t, mode="c"] idx = empty(2, npuint)
-
         cdef bint b1_block_mode = self._isIndexBlock(idx_block_1_raw)
         cdef bint b2_block_mode = self._isIndexBlock(idx_block_2_raw)
 
-        cdef ar[uint_t, mode="c"] idx_1, idx_2
-        cdef size_t b1_lb, b2_lb
+        cdef ar[int, mode="c"] idx_1, idx_2
+        cdef size_t b1_lb = 50, b2_lb = 50
 
         if b1_block_mode:
             b1_lb = self._indexBlockLower(idx_block_1_raw)
@@ -1104,7 +1103,9 @@ cdef class LPSolve(object):
         else:
             idx_2 = idx_block_2_raw
 
-        cdef ar[double,mode="c"] row = empty(2, npfloat)
+        cdef ar[uint_t, mode="c"] idx = empty(2, npuint)
+
+        cdef ar[double, mode="c"] row = empty(2, npfloat)
         row[0], row[1] = 1, -1
 
         cdef list ret_row_idx = [None]*idx_block_1_size
@@ -1735,8 +1736,6 @@ cdef class LPSolve(object):
         set_scaling(self.lp, scaling_option)
         set_verbose(self.lp, option_dict["verbosity"])
 
-        #print "start_basis", start_basis
-
         if start_basis is not None:
             assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
             set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
@@ -2311,9 +2310,9 @@ cdef str _valid_constraint_identifiers = \
 
 
 cdef inline isSimpleCType(str ctypestr):
-    cdef int ctype = self.getCType(ctypestr)
+    cdef int ctype = getCType(ctypestr)
     
-    return ctype in [constraint_leq, constraint_geq, constraint_eq]
+    return ctype in [constraint_leq, constraint_geq, constraint_equal]
 
 
 cdef inline getCType(str ctypestr):  # no return typing to allow exceptions
