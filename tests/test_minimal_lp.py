@@ -197,11 +197,18 @@ class TestMinimal(unittest.TestCase):
 
         self.assertAlmostEqual(lp.getObjectiveValue(), 1)
         
-        v = lp.getSolution()
+        if opts[0] not in ["d", "T"]:
+            v = lp.getSolution(indices[opts[0]])
+        else:
+            v = lp.getSolution()
 
         self.assert_(len(v) == 3, "len(v) = %d != 3" % len(v))
+
+        self.assertAlmostEqual(lp.getSolution(0), 1)
         self.assertAlmostEqual(v[0], 1)
+        self.assertAlmostEqual(lp.getSolution(1), 0)
         self.assertAlmostEqual(v[1], 0)
+        self.assertAlmostEqual(lp.getSolution(2), 0)
         self.assertAlmostEqual(v[2], 0)
 
 
@@ -459,7 +466,20 @@ class TestTwoLevel(unittest.TestCase):
                 self.assertAlmostEqual(v[4], 0)
                 self.assertAlmostEqual(v[5], 0)
 
-                # now test the retrieval
+                if opts[0] in "nN":
+
+                    d = lp.getSolutionDict()
+
+                    self.assert_(set(d.iterkeys()) == set(["a", "b"]))
+
+                    self.assertAlmostEqual(d["a"][0], 1)
+                    self.assertAlmostEqual(d["a"][1], 0)
+                    self.assertAlmostEqual(d["a"][2], 0)
+                    self.assertAlmostEqual(d["b"][0], 1)
+                    self.assertAlmostEqual(d["b"][1], 0)
+                    self.assertAlmostEqual(d["b"][2], 0)
+
+            # now test the retrieval
             
 
     def testConstraints_tl(self): self.checkMinLP1("tl")

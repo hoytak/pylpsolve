@@ -5,8 +5,7 @@ cimport cython
 
 from numpy import int32,uint32,int64, uint64, float32, float64,\
     uint, empty, ones, zeros, uint, arange, isscalar, amax, amin, \
-    ndarray, array, asarray, isfinite
-
+    ndarray, array, asarray, isfinite, argsort
 
 from typeconfig import npint, npuint, npfloat
 
@@ -81,8 +80,35 @@ cdef inline bint is2dlist(list l):
                 return False
     else:
         return True
-        
 
+cdef inline bint isposintlist(list l):
+    for t in l:
+        if not isposint(t):
+            return False
+
+    return True
+
+cdef inline bint isfullindexarray(ar a_o, size_t n_cols):
+    cdef ar[int] a = a_o
+
+    if a.shape[0] != n_cols:
+        return False
+
+    cdef ar[int, mode="c"] count = zeros(n_cols)
+
+    cdef size_t i
+    cdef int v 
+
+    with cython.boundscheck(False):
+        for 0 <= i < n_cols:
+            v = a[i]
+            if v < 0 or v >= n_cols:
+                return False
+
+            if count[v] != 0:
+                return False
+
+            count[v] = 1
 
 
 ######################################################################
@@ -157,11 +183,15 @@ cdef extern from "lpsolve/lp_lib.h":
     void set_presolve(lprec*, int do_presolve, int maxloops)
     void set_scaling(lprec *, int scalemode)
 
+    real get_var_primalresult(lprec *lp, int index)
+
     # Basis stuff
     ecode guess_basis(lprec *lp, real *guessvector, int *basisvector)
     ecode set_basis(lprec *lp, int *bascolumn, bint nonbasic)
+    ecode get_basis(lprec *lp, int *bascolumn, unsigned char nonbasic)
 
     int get_Ncolumns(lprec*)
+    int get_Nrows(lprec*)
 
     ecode get_ptr_variables(lprec*, real **var)
     real get_objective(lprec*)
@@ -176,6 +206,9 @@ cdef extern from "lpsolve/lp_lib.h":
     
     void set_verbose(lprec*, int)
 
+    # Retrieving statistics
+    long long get_total_iter(lprec *lp)
+
 
 ############################################################
 # Structs for buffering the constraints
@@ -187,14 +220,14 @@ cdef extern from "Python.h":
 
     void Py_INCREF(object)
 
-#cdef extern from "Python.h":
-#    void* malloc (size_t n)
-#    void* realloc (void *p, size_t n)
-#    void free(void *p)
-
 
 cdef extern from "stdlib.h":
     void memset(void *p, char value, size_t n)
+
+DEF nIterations = 0
+
+cdef dict info_lookup = {
+    "iterations" : nIterations}
 
 ################################################################################
 # Now the full class
@@ -240,7 +273,6 @@ cdef class LPSolve(object):
 
     # Variables relating to post-solve aspects
     cdef ar final_variables
-
 
     def __cinit__(self):
 
@@ -1200,7 +1232,6 @@ cdef class LPSolve(object):
     # Helper functions for turning dictionaries or tuple-lists into an
     # index array + value array.
 
-
     cdef ar _attemptArrayList(self, list l):
 
         # Now we need to specify that only lists of lists or lists of
@@ -1247,8 +1278,7 @@ cdef class LPSolve(object):
             raise ValueError("Lengths of sublist in list of lists/arrays not consistent.")
         else:
             return array(l, npfloat)
-                
-
+                    
     cdef tuple _getArrayPairFromDict(self, dict d):
         # Builds an array pair from a dictionary
 
@@ -1428,22 +1458,12 @@ cdef class LPSolve(object):
 
     cdef setupLP(self, dict option_dict):
         
-        cdef unsigned long n, presolve
-
-        # Stuff for the basis setting
-        cdef ar b, g
-        cdef ar[int, mode="c"]    start_basis 
-        cdef ar[double, mode="c"] guess_vect 
-
-        cdef size_t full_basis_size
-        cdef size_t basic_basis_size
-
         ########################################
         # Go through and configure things depending on the options
 
         ####################
         # Presolve
-        presolve = 0
+        cdef unsigned long n, presolve = 0
 
         for k, n in presolve_flags.iteritems():
             if option_dict[k]:
@@ -1488,9 +1508,7 @@ cdef class LPSolve(object):
         if option_dict["verbosity"] not in [1,2,3,4,5]:
             raise ValueError("Verbosity level must be 1,2,3,4, or 5 (highest).")
 
-
         # Options are vetted now; basis and others might not be 
-
 
         ########################################
         # Now set up the LP
@@ -1504,14 +1522,6 @@ cdef class LPSolve(object):
             if not resize_lp(self.lp, self.n_rows, self.n_columns):
                 raise MemoryError("Out of memory resizing internal LP structure.")
             
-        ########################################
-        # Set all the options
-            
-        set_presolve(self.lp, presolve, 100)
-        set_pivoting(self.lp, pricer_option)
-        set_scaling(self.lp, scaling_option)
-        set_verbose(self.lp, option_dict["verbosity"])
-
         ####################
         # Constraints
 
@@ -1527,18 +1537,24 @@ cdef class LPSolve(object):
 
         self.applyObjective()
 
-
         ####################
         # Set the basis/guess
 
-        start_basis = None
-        guess_vect  = None
+        # Stuff for the basis setting
+        cdef ar b, g
 
-        full_basis_size  = 1 + self.n_columns + self.n_rows
-        basic_basis_size = 1 + self.n_columns
+        cdef size_t basic_basis_size = 1 + self.n_columns
+        cdef size_t full_basis_size = basic_basis_size + self.n_rows
+
+        cdef ar[int, mode="c"]    start_basis = None
+        cdef ar[double, mode="c"] guess_vect  = None
 
         # possibly set the start basis
         if "basis" in option_dict:
+            if presolve != 0:
+                warnings.warn("Presolve must not be active when combined with setting basis; ignoring presolve.")
+                presolve = 0
+
             basis = option_dict["basis"]
 
             if type(basis) is ndarray:
@@ -1548,9 +1564,8 @@ cdef class LPSolve(object):
             else:
                 raise TypeError("Basis must be either ndarray or list.")
 
-
             if b.ndim != 1 or b.shape[0] not in [full_basis_size, basic_basis_size]:
-                raise ValueError("Basis must be 1d array of length 1 + num_columns or 1 + num_columns+ num_rows")
+                raise ValueError("Basis must be 1d array of length 1 + num_columns or 1 + num_columns [+ num_rows]")
 
             if b.dtype != npint:
                 warnings.warn("Basis not an integer array/list, converting.")
@@ -1559,49 +1574,100 @@ cdef class LPSolve(object):
                 start_basis = b.ravel()
 
         elif "guess" in option_dict:
-            guess = option_dict["guess"]
+            if presolve != 0:
+                warnings.warn("Presolve must not be active when combined with setting basis; ignoring presolve.")
+                presolve = 0
 
-            if type(guess) is ndarray:
-                g = guess
-            elif type(guess) is list:
-                g = array(guess)
-            else:
-                raise TypeError("Guess must be either 1d ndarray or list.")
+            start_basis = self._getBasisFromGuess(option_dict["guess"], option_dict["error_on_bad_guess"])
+
+        ########################################
+        # Set all the options
+            
+        set_presolve(self.lp, presolve, 100)
+        set_pivoting(self.lp, pricer_option)
+        set_scaling(self.lp, scaling_option)
+        set_verbose(self.lp, option_dict["verbosity"])
+
+        #print "start_basis", start_basis
+
+        if start_basis is not None:
+            assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
+            set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
+
+        ####################
+        # Clear out all the temporary stuff 
+        self._clear(True)
+
+
+    cdef ar _getBasisFromGuess(self, guess, bint error_on_bad_guess):
+        # Note: it is not safe to run this function if the presolve
+        # has not been set up
+
+        cdef ar[double, mode="c"] guess_vect
+        cdef ar[int, mode="c"] start_basis
+
+        if type(guess) is ndarray or (type(guess) is list and isnumericlist(guess)):
+            # We have a full and complete guess
+
+            g = asarray(guess, dtype=npfloat)
 
             if g.ndim != 1 or g.shape[0] != self.n_columns:
                 raise ValueError("Guess must be 1d array of length num_columns.")
 
-            guess_vect = (npfloat(g)).ravel()
+            guess_vect = empty(1 + self.n_columns, npfloat)
+            guess_vect[0] = 0
+            guess_vect[1:] = g
 
             # Now try to create the basis
-            start_basis = empty(full_basis_size, npfloat)
+            start_basis = zeros(1 + self.n_columns + self.n_rows, npint)
 
             if not guess_basis(self.lp, <double*>guess_vect.data, <int*>start_basis.data):
 
                 error_msg = "Finding starting basis from guess vector failed; discarding."
 
-                if option_dict["error_on_bad_guess"]:
+                if error_on_bad_guess:
                     raise LPSolveException(error_msg)
                 else:
                     warnings.warn(error_msg)
+                    return None
+            
+            return start_basis
 
-                start_basis = None
-
-        # Now set the starting basis if it's not None, i.e. one of
-        # the previous versions succeeded
-
-        if start_basis is not None:
-            assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
-
-            set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
-
-
-        ####################
-        # Clear out all the temporary stuff 
-
-        self._clear(True)
-
+        # Made it here, so the basis must be a different type
         
+        cdef ar[int, mode="c"]    I
+        cdef ar[double, mode="c"] V
+        cdef tuple t
+        
+        cdef size_t prev_n_cols = self.n_columns
+
+        if type(guess) is dict:
+            I, V = self._getArrayPairFromDict(guess)
+        elif type(guess) is list and istuplelist(guess):
+            I, V = self._getArrayPairFromTupleList(guess)
+        elif type(guess) is tuple and len(<tuple>guess) == 2:
+            I, V = self._getArrayPairFromTupleList([guess])
+        elif isnumeric(guess):
+            I = array([0], npint)
+            V = array([guess], npfloat)
+        else:
+            raise ValueError("Type of guess not recognized.")
+
+        # Make sure the number of columns hasn't changed
+        if prev_n_cols != self.n_columns:
+            self.n_columns = prev_n_cols
+            raise ValueError("Index in guess out of bounds.")
+
+        # Now see if it's a full guess and we can punt it back
+        if isfullindexarray(I, self.n_columns):
+            return self._getBasisFromGuess(V[argsort(I)], error_on_bad_guess)
+        else:
+            raise ValueError("Variable guess not complete.")
+        
+            # We could copy the LP, then set the parameters given via
+            # identical lower/upper bounds, then allow the presolve to
+            # modify the model as needed.  But that's for later.
+
     def solve(self, **options):
         """
         Solves the given model.  `mode` may be either "minimize"
@@ -1736,7 +1802,7 @@ cdef class LPSolve(object):
         
 
 
-    cpdef ar getSolution(self, indices = None):
+    def getSolution(self, indices = None):
         """
         Returns the final values of the variables in the constraints.
 
@@ -1762,48 +1828,110 @@ cdef class LPSolve(object):
         if self.lp == NULL:
             raise LPSolveException("Final variables available only after solve() is called.")
 
-        cdef bint fill_mode = False
-
-        if self.final_variables is None:
-            fill_mode = True
-            self.final_variables = empty(self.n_columns, npfloat)
-
-            
-        cdef ar[float_t, mode="c"] fv = self.final_variables
-        cdef real *fv_ptr
-        cdef size_t i
-
-        if fill_mode:
-            get_ptr_variables(self.lp, &fv_ptr)
-            
-            for 0 <= i < self.n_columns:
-                fv[i] = fv_ptr[i]
-
         # Okay, now we've got it
+
+        cdef double *vars
+
+        get_ptr_variables(self.lp, &vars)
 
         cdef tuple t
         cdef ar[size_t, ndim=2, mode="c"] idx_bounds
+        cdef ar[double, mode="c"] res
+        cdef ar[int] idx_request
+        cdef list l
+        cdef int idx, idx_lb, idx_ub
+        cdef size_t i
 
         if indices is None:
-            return fv.copy()
+            res = empty(self.n_columns, npfloat)
+            for 0 <= i < res.shape[0]:
+                res[i] = vars[i]
+            return res
+
         elif type(indices) is str:
+
             try:
                 idx_bounds = self._named_index_blocks[indices]
             except KeyError:
                 raise ValueError("Variable block '%s' not defined." % indices)
+            
+            res = empty(idx_bounds[0,1] - idx_bounds[0,0], npfloat)
+    
+            for 0 <= i < res.shape[0]:
+                res[i] = vars[idx_bounds[0,0] + i]
+
+            return res
+
+        elif type(indices) is list:
+            l = <list>indices
+            if not isposintlist(l):
+                raise ValueError("Requested index list must contain only valid indices.")
+            
+            res = empty(len(l), npfloat)
+
+            for 0 <= i < res.shape[0]:
+                idx = l[i]
                 
-            return fv[idx_bounds[0,0]:idx_bounds[0,1]]
-        elif type(indices) is list or type(indices) is array:
-            # May raise an exception
-            return fv[indices]
+                if idx < 0 or idx >= self.n_columns:
+                    raise ValueError("Variable index not valid: %d" % idx)
+
+                res[i] = vars[idx]
+
+            return res
+
+        elif type(indices) is ndarray:
+            idx_request = asarray(indices, npint)
+            
+            res = empty(idx_request.shape[0], npfloat)
+            
+            for 0 <= i < res.shape[0]:
+                idx = idx_request[i]
+
+                if idx < 0 or idx >= self.n_columns:
+                    raise ValueError("Variable index not valid: %d" % idx)
+
+                res[i] = vars[idx]
+            
+            return res
+
         elif type(indices) is tuple:
             t = indices
             self._validateIndexTuple(t)
-            return fv[t[0]:t[1]]
-        elif isnumeric(indices):
-            return fv[indices]
+
+            idx_lb = t[0]
+            idx_ub = t[1]
+
+            res = empty(idx_ub - idx_lb, npfloat)
+    
+            for 0 <= i < res.shape[0]:
+                res[i] = vars[idx_lb + i]
+
+            return res
+
+        elif isposint(indices):
+            idx = indices
+
+            if idx < 0 or idx >= self.n_columns:
+                raise ValueError("Variable index not valid: %d" % idx)
+            
+            return vars[idx]
+
         else:
             raise ValueError("Type of `indices` argument not recognized.")
+
+    def getSolutionDict(self):
+        """
+        Returns a dictionary of all the solutions to all of the
+        previously named variable blocks.
+        """
+
+        cdef dict ret = {}
+
+        for k in self._named_index_blocks.iterkeys():
+            ret[k] = self.getSolution(k)
+            
+        return ret
+
 
     cpdef real getObjectiveValue(self):
         """
@@ -1815,11 +1943,50 @@ cdef class LPSolve(object):
 
         return get_objective(self.lp)
 
+    def getBasis(self, include_dual_basis = True):
+        """
+        Returns the basis from the previous run.
+        """
+
+        if self.lp == NULL:
+            raise LPSolveException("Info available only after solve() is called.")
+
+        cdef ar[int, mode="c"] basis = empty(
+            1 + self.n_columns + (self.n_rows if include_dual_basis else 0), npint)
+
+        if not get_basis(self.lp, <int*>basis.data, include_dual_basis):
+            raise LPSolveException("Unknown error while retrieving basis.")
+
+        return basis
+
     cpdef print_lp(self):
 
         self.setupLP(self.getOptions())
         print_lp(self.lp)
         
+
+    def getInfo(self, info):
+        """
+        Returns a specific statistic from the latest run of the lp.
+        The available statistics are 
+        """
+        
+        if self.lp == NULL:
+            raise LPSolveException("Info available only after solve() is called.")
+
+        cdef int ret_stat
+
+        try:
+            ret_stat = info_lookup[info.lower()]
+        except KeyError:
+            raise ValueError("info must be one of: %s" % 
+                             ", ".join(info_lookup.iterkeys()))
+
+        if ret_stat == nIterations:
+            return get_total_iter(self.lp)
+        else:
+            assert False
+            
 
     ############################################################
     # Methods for dealing with the constraint buffers
