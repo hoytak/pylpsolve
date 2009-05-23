@@ -302,7 +302,7 @@ cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity,
     cdef ar[unsigned int, mode="c"] mapping = make_mapping(S, nV, nE)
 
     labelGraph(<int*>labels.data, <unsigned int*> mapping.data,
-                <int*>S.data, <int*>D.data, <double*> x.data, source, nE, 1)
+                <int*>S.data, <int*>D.data, <double*> x.data, source, nE, nV, 1)
 
     # Working D -> S
     D_idxmap = argsort(D)
@@ -314,7 +314,7 @@ cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity,
     mapping = make_mapping(D, nV, nE)
 
     labelGraph(<int*>labels.data, <unsigned int*> mapping.data,
-                <int*>D.data, <int*>S.data, <double*>x.data, sink, nE, 0)
+                <int*>D.data, <int*>S.data, <double*>x.data, sink, nE, nV, 0)
     
     return labels
 
@@ -337,8 +337,10 @@ cdef inline ar make_mapping(ar A_o, size_t nV, size_t nE):
 
 # Easiest to do this recursively
 cdef labelGraph(int *labels, unsigned int *mapping_S, 
-                      int *S, int *D, double *x,
-                      int set_node, size_t nE, int label):
+                int *S, int *D, double *x,
+                int set_node, size_t nE, size_t nV, int label):
+
+    assert 0 <= set_node < nV
 
     if labels[set_node] == label:
         return
@@ -347,12 +349,11 @@ cdef labelGraph(int *labels, unsigned int *mapping_S,
 
     cdef unsigned int cur_edge = mapping_S[set_node]
 
-    if cur_edge == nE:  # Not connected to anything
-        return
-
     cdef int dest_label
 
-    while S[cur_edge] == set_node:
+    while cur_edge != nE and S[cur_edge] == set_node:
+
+        assert 0 <= D[cur_edge] < nV, "D[cur_edge] = %d; nV = %d" % (D[cur_edge], nV)
 
         dest_label = labels[D[cur_edge]]
 
@@ -360,7 +361,7 @@ cdef labelGraph(int *labels, unsigned int *mapping_S,
             # It's not part of the cut
             assert dest_label in [-1, label]
             
-            labelGraph(labels, mapping_S, S, D, x, D[cur_edge], nE, label)
+            labelGraph(labels, mapping_S, S, D, x, D[cur_edge], nE, nV, label)
 
         cur_edge += 1
 
