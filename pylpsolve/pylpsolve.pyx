@@ -1044,6 +1044,11 @@ cdef class LPSolve(object):
         cdef ar A = self._resolveValues(t_val, False)
         cdef size_t i
 
+        # typing for the rhs under range constraints
+        cdef ar[double] rhs_a, rhs_b
+        cdef bint a_is_scalar, b_is_scalar
+        cdef list rhsl, ret_idx_l
+
         if A.ndim == 1:
             idx = self._resolveIdxBlock(t_idx, A.shape[0])
             return self._addConstraint(idx, A, ctype, rhs)
@@ -1054,17 +1059,46 @@ cdef class LPSolve(object):
 
             idx = self._resolveIdxBlock(t_idx, A.shape[1])
             
-            
-            rhs_a = self._resolveValues(rhs, True)
-            
-            if rhs_a.shape[0] == 1:
-                return [self._addConstraint(idx, A[i,:], ctype, rhs_a[0])
-                        for 0 <= i < A.shape[0]]
-            elif rhs_a.shape[0] == A.shape[0]:
-                return [self._addConstraint(idx, A[i,:], ctype, rhs_a[i])
-                        for 0 <= i < A.shape[0]]
+            if ctype in [constraint_leq, constraint_geq, constraint_equal]:
+                rhs_a = self._resolveValues(rhs, True)
+
+                if rhs_a.shape[0] == 1:
+                    return [self._addConstraint(idx, A[i,:], ctype, rhs_a[0])
+                            for 0 <= i < A.shape[0]]
+                elif rhs_a.shape[0] == A.shape[0]:
+                    return [self._addConstraint(idx, A[i,:], ctype, rhs_a[i])
+                            for 0 <= i < A.shape[0]]
+                else:
+                    raise ValueError("Length of right hand side in constraint must be either 1 or match the number of constraints given.")
+
+            elif ctype == constraint_in:
+                if not (type(rhs) is list or type(rhs) is tuple) or not len(rhs) == 2:
+                    raise ValueError("Range constraints require rhs to be either 2-tuple or 2-list.")
+                
+                rhs_a = self._resolveValues(rhs[0], True)
+                rhs_b = self._resolveValues(rhs[1], True)
+
+                a_is_scalar = (rhs_a.shape[0] == 1)
+                b_is_scalar = (rhs_b.shape[0] == 1)
+
+                if not a_is_scalar and rhs_a.shape[0] != A.shape[0]:
+                    raise ValueError("Length of lower bound in range constraint must be either 1 or match the number of constraints given.")
+
+                if not b_is_scalar and rhs_b.shape[0] != A.shape[0]:
+                    raise ValueError("Length of upper bound in range constraint must be either 1 or match the number of constraints given.")
+                    
+                ret_idx_l = [None]*A.shape[0]
+                rhsl = [None, None]
+
+                for 0 <= i < A.shape[0]:
+                    rhsl[0] = rhs_a[0 if a_is_scalar else i]
+                    rhsl[1] = rhs_b[0 if b_is_scalar else i]
+
+                    ret_idx_l[i] = self._addConstraint(idx, A[i, :], ctype, rhsl)
+
+                return ret_idx_l
             else:
-                raise ValueError("Length of right hand side in constraint must be either 1 or match the number of constraints given.")
+                assert False
         else:
             assert False
 
