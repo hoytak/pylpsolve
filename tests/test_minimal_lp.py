@@ -609,6 +609,16 @@ class TestTwoLevel(unittest.TestCase):
         targets["a"] = ar([1,1,1],dtype=uint)
         targets["f"] = ar([1,1,1],dtype=float64)
 
+        targets_t = {}
+        targets_t["t"] = tuple
+        targets_t["l"] = list
+
+        targets_u = {}
+        targets_u["s"] = 10
+        targets_u["l"] = [10,10,10]
+        targets_u["a"] = ar([10,10,10],dtype=uint)
+        targets_u["f"] = ar([10,10,10],dtype=float64)
+
         lp = LPSolve()
 
         if opts[0] == "N":
@@ -616,17 +626,24 @@ class TestTwoLevel(unittest.TestCase):
 
         io = indices[opts[0]]
         vl = values [opts[1]]
-        tr = targets[opts[2]]
+        
+        if len(opts) == 3:
+            tr = targets[opts[2]]
+            cstr = ">="
+        else:
+            tr = targets_t[opts[3]]([targets[opts[2]], targets[opts[4]]])
+            cstr = "in"
+
         ob = [1,2,3]
         
         c_ret_idx = [0,1,2]
 
         if io is None:
-            ret = lp.addConstraint(vl, ">=", tr)
+            ret = lp.addConstraint(vl, cstr, tr)
             self.assert_(ret == c_ret_idx, "%s != %s" %(str(ret), str(c_ret_idx)))
             lp.setObjective(ob)
         else:
-            ret = lp.addConstraint( (io, vl), ">=", tr)
+            ret = lp.addConstraint( (io, vl), cstr, tr)
             self.assert_(ret == c_ret_idx, "%s != %s" %(str(ret), str(c_ret_idx)))
             lp.setObjective( (io, ob) )
 
@@ -754,6 +771,139 @@ class TestTwoLevel(unittest.TestCase):
     def test2DMatrix_eaa(self): self.check2dMatrix("ela")
     def test2DMatrix_eaf(self): self.check2dMatrix("elf")
 
+    # Test a restricted set to look at the bounds; namely fix the tuple at the beginning
+    def test2DMatrix_tLala(self): self.check2dMatrix("tLala")
+    def test2DMatrix_tLalf(self): self.check2dMatrix("tLalf")
+    def test2DMatrix_tLall(self): self.check2dMatrix("tLall")
+    def test2DMatrix_tLals(self): self.check2dMatrix("tLals")
+
+    def test2DMatrix_tLata(self): self.check2dMatrix("tLata")
+    def test2DMatrix_tLatf(self): self.check2dMatrix("tLatf")
+    def test2DMatrix_tLatl(self): self.check2dMatrix("tLatl")
+    def test2DMatrix_tLats(self): self.check2dMatrix("tLats")
+
+
+    def test2DMatrix_tLfla(self): self.check2dMatrix("tLfla")
+    def test2DMatrix_tLflf(self): self.check2dMatrix("tLflf")
+    def test2DMatrix_tLfll(self): self.check2dMatrix("tLfll")
+    def test2DMatrix_tLfls(self): self.check2dMatrix("tLfls")
+
+    def test2DMatrix_tLfta(self): self.check2dMatrix("tLfta")
+    def test2DMatrix_tLftf(self): self.check2dMatrix("tLftf")
+    def test2DMatrix_tLftl(self): self.check2dMatrix("tLftl")
+    def test2DMatrix_tLfts(self): self.check2dMatrix("tLfts")
+
+
+    def test2DMatrix_tLlla(self): self.check2dMatrix("tLlla")
+    def test2DMatrix_tLllf(self): self.check2dMatrix("tLllf")
+    def test2DMatrix_tLlll(self): self.check2dMatrix("tLlll")
+    def test2DMatrix_tLlls(self): self.check2dMatrix("tLlls")
+
+    def test2DMatrix_tLlta(self): self.check2dMatrix("tLlta")
+    def test2DMatrix_tLltf(self): self.check2dMatrix("tLltf")
+    def test2DMatrix_tLltl(self): self.check2dMatrix("tLltl")
+    def test2DMatrix_tLlts(self): self.check2dMatrix("tLlts")
+
+
+    def test2DMatrix_tLsla(self): self.check2dMatrix("tLsla")
+    def test2DMatrix_tLslf(self): self.check2dMatrix("tLslf")
+    def test2DMatrix_tLsll(self): self.check2dMatrix("tLsll")
+    def test2DMatrix_tLsls(self): self.check2dMatrix("tLsls")
+
+    def test2DMatrix_tLsta(self): self.check2dMatrix("tLsta")
+    def test2DMatrix_tLstf(self): self.check2dMatrix("tLstf")
+    def test2DMatrix_tLstl(self): self.check2dMatrix("tLstl")
+    def test2DMatrix_tLsts(self): self.check2dMatrix("tLsts")
+
+
+    def test2DMatrix_taala(self): self.check2dMatrix("tlala")
+    def test2DMatrix_taalf(self): self.check2dMatrix("tlalf")
+    def test2DMatrix_taall(self): self.check2dMatrix("tlall")
+    def test2DMatrix_taals(self): self.check2dMatrix("tlals")
+
+    def test2DMatrix_taata(self): self.check2dMatrix("tlata")
+    def test2DMatrix_taatf(self): self.check2dMatrix("tlatf")
+    def test2DMatrix_taatl(self): self.check2dMatrix("tlatl")
+    def test2DMatrix_taats(self): self.check2dMatrix("tlats")
+
+
+    def test2DMatrix_tafla(self): self.check2dMatrix("tlfla")
+    def test2DMatrix_taflf(self): self.check2dMatrix("tlflf")
+    def test2DMatrix_tafll(self): self.check2dMatrix("tlfll")
+    def test2DMatrix_tafls(self): self.check2dMatrix("tlfls")
+
+    def test2DMatrix_tafta(self): self.check2dMatrix("tlfta")
+    def test2DMatrix_taftf(self): self.check2dMatrix("tlftf")
+    def test2DMatrix_taftl(self): self.check2dMatrix("tlftl")
+    def test2DMatrix_tafts(self): self.check2dMatrix("tlfts")
+
+
+    def test2DMatrix_talla(self): self.check2dMatrix("tllla")
+    def test2DMatrix_tallf(self): self.check2dMatrix("tlllf")
+    def test2DMatrix_talll(self): self.check2dMatrix("tllll")
+    def test2DMatrix_talls(self): self.check2dMatrix("tllls")
+
+    def test2DMatrix_talta(self): self.check2dMatrix("tllta")
+    def test2DMatrix_taltf(self): self.check2dMatrix("tlltf")
+    def test2DMatrix_taltl(self): self.check2dMatrix("tlltl")
+    def test2DMatrix_talts(self): self.check2dMatrix("tllts")
+
+
+    def test2DMatrix_tasla(self): self.check2dMatrix("tlsla")
+    def test2DMatrix_taslf(self): self.check2dMatrix("tlslf")
+    def test2DMatrix_tasll(self): self.check2dMatrix("tlsll")
+    def test2DMatrix_tasls(self): self.check2dMatrix("tlsls")
+
+    def test2DMatrix_tasta(self): self.check2dMatrix("tlsta")
+    def test2DMatrix_tastf(self): self.check2dMatrix("tlstf")
+    def test2DMatrix_tastl(self): self.check2dMatrix("tlstl")
+    def test2DMatrix_tasts(self): self.check2dMatrix("tlsts")
+
+
+    def test2DMatrix_tlala(self): self.check2dMatrix("tlala")
+    def test2DMatrix_tlalf(self): self.check2dMatrix("tlalf")
+    def test2DMatrix_tlall(self): self.check2dMatrix("tlall")
+    def test2DMatrix_tlals(self): self.check2dMatrix("tlals")
+
+    def test2DMatrix_tlata(self): self.check2dMatrix("tlata")
+    def test2DMatrix_tlatf(self): self.check2dMatrix("tlatf")
+    def test2DMatrix_tlatl(self): self.check2dMatrix("tlatl")
+    def test2DMatrix_tlats(self): self.check2dMatrix("tlats")
+
+
+    def test2DMatrix_tlfla(self): self.check2dMatrix("tlfla")
+    def test2DMatrix_tlflf(self): self.check2dMatrix("tlflf")
+    def test2DMatrix_tlfll(self): self.check2dMatrix("tlfll")
+    def test2DMatrix_tlfls(self): self.check2dMatrix("tlfls")
+
+    def test2DMatrix_tlfta(self): self.check2dMatrix("tlfta")
+    def test2DMatrix_tlftf(self): self.check2dMatrix("tlftf")
+    def test2DMatrix_tlftl(self): self.check2dMatrix("tlftl")
+    def test2DMatrix_tlfts(self): self.check2dMatrix("tlfts")
+
+
+    def test2DMatrix_tllla(self): self.check2dMatrix("tllla")
+    def test2DMatrix_tlllf(self): self.check2dMatrix("tlllf")
+    def test2DMatrix_tllll(self): self.check2dMatrix("tllll")
+    def test2DMatrix_tllls(self): self.check2dMatrix("tllls")
+
+    def test2DMatrix_tllta(self): self.check2dMatrix("tllta")
+    def test2DMatrix_tlltf(self): self.check2dMatrix("tlltf")
+    def test2DMatrix_tlltl(self): self.check2dMatrix("tlltl")
+    def test2DMatrix_tllts(self): self.check2dMatrix("tllts")
+
+
+    def test2DMatrix_tlsla(self): self.check2dMatrix("tlsla")
+    def test2DMatrix_tlslf(self): self.check2dMatrix("tlslf")
+    def test2DMatrix_tlsll(self): self.check2dMatrix("tlsll")
+    def test2DMatrix_tlsls(self): self.check2dMatrix("tlsls")
+
+    def test2DMatrix_tlsta(self): self.check2dMatrix("tlsta")
+    def test2DMatrix_tlstf(self): self.check2dMatrix("tlstf")
+    def test2DMatrix_tlstl(self): self.check2dMatrix("tlstl")
+    def test2DMatrix_tlsts(self): self.check2dMatrix("tlsts")
+
+
 
 
     ############################################################
@@ -816,7 +966,6 @@ class TestTwoLevel(unittest.TestCase):
     # test that a ValueError is raised on out of bounds for getObjective()
     # test that a ValueError is raised if the length of anything doesn't match up
     # test that bad mode setting raises a value error
-
 
 
 if __name__ == '__main__':
