@@ -15,6 +15,22 @@ import optionlookup
 ctypedef unsigned char ecode
 ctypedef double real
 
+############################################################
+# See if we can support sparse matrics in specifying constraints 
+
+# cdef bint sparse_supported
+
+# try:
+#     import scipy.sparse as sp
+#     sparse_supported = True
+# except ImportError:
+#     sp = None
+#     sparse_supported = False
+
+# cdef object issparse = sp.issparse if sparse_supported else None
+# cdef object spfind   = sp.find     if sparse_supported else None
+
+
 ##############################
 # This is how it should work
 #from typechecks cimport *
@@ -647,6 +663,8 @@ cdef class LPSolve(object):
         B[0,0] = lower
         B[0,1] = upper
 
+        assert self._indexBlockSize(B) == upper - lower
+
         return B
 
     cdef ar _getVariableIndexBlock(self, size_t size, str name):
@@ -679,6 +697,11 @@ cdef class LPSolve(object):
                 self._named_index_blocks[name] = idx
                 return idx
 
+    cdef bint _isCurrentIndexBlock(self, idx_block):
+        if type(idx_block) is str:
+            return idx_block in self._named_index_blocks
+        else:
+            return True
 
     ########################################
     # For internally resolving things
@@ -769,6 +792,31 @@ cdef class LPSolve(object):
 
         else:
             raise TypeError("Type of index (%s) not recognized; must be scalar, list, tuple, str, or array." % type(idx))
+
+    cdef size_t _indexBlockSize(self, ar idxblock):
+        if idxblock.ndim == 2:
+            assert idxblock.shape[0] == 1
+            assert idxblock.shape[1] == 2
+            return ((<size_t*>idxblock.data)[1] - ((<size_t*>idxblock.data)[0]))
+        elif idxblock.ndim == 1:
+            return idxblock.shape[0]
+
+    cdef bint _isIndexBlock(self, ar idxblock):
+        return idxblock.ndim == 2
+
+    cdef size_t _indexBlockLower(self, ar idxblock):
+        assert idxblock.ndim == 2
+        assert idxblock.shape[0] == 1
+        assert idxblock.shape[1] == 2
+        assert (<size_t*>idxblock.data)[0] == idxblock[0,0]
+        return (<size_t*>idxblock.data)[0]
+
+    cdef size_t _indexBlockUpper(self, ar idxblock):
+        assert idxblock.ndim == 2
+        assert idxblock.shape[0] == 1
+        assert idxblock.shape[1] == 2
+        assert (<size_t*>idxblock.data)[1] == idxblock[0,1]
+        return (<size_t*>idxblock.data)[1]
 
     cdef _validateIndexTuple(self, tuple t):
         cdef int v_idx, w_idx
@@ -909,8 +957,10 @@ cdef class LPSolve(object):
             
             if is_list_sequence:
                 return self._addConstraintTupleList(<list>coefficients, ctype, rhs)
+
             elif is_numerical_sequence:
                 return self._addConstraintArray(None, coefficients, ctype, rhs)
+
             else:
 
                 # try interpreting it as an array
@@ -961,6 +1011,7 @@ cdef class LPSolve(object):
         else:
             assert False
 
+
     cdef _addConstraintDict(self, dict d, str ctype, rhs):
         I, V = self._getArrayPairFromDict(d)
         return self._addConstraint(I, V, ctype, rhs)
@@ -969,6 +1020,180 @@ cdef class LPSolve(object):
         I, V = self._getArrayPairFromTupleList(l)
         return self._addConstraint(I, V, ctype, rhs)
 
+
+    ############################################################
+    # Convenience functions dealing with common constraint types
+
+    def bindEach(self, indices_1, str ctype, indices_2):
+        """
+        Constrains each variable in `index_group_1` by the
+        corresponding variable in `index_group_2` using the ctype
+        relationship.  For example::
+
+            lp.bindEach("x", "<=", "y")
+
+        adds constraints to the LP such that each variable in ``x`` is
+        less than or equal to the corresponding variable in ``y``.  
+
+        `index_group_1` and `index_group_2` must specify the same
+        number of indices, and can be any valid specification for an
+        index group.
+
+        Returns the corresponding list of rows.
+        """
+
+        ########################################
+        # Check to make sure the constraint type is okay for this
+
+        if not isSimpleCType(ctype):
+            raise ValueError("Constraint type must be <=, =, or >=.")
+
+        ########################################
+        # Validate the indices
+        
+        cdef ar idx_b1, idx_b2
+        cdef size_t size
+
+        idx_b1, idx_b2, size = self.validateConvienceIndexPair(indices_1, indices_2)
+
+        ########################################
+        # Now loop through and take care of binding the indices
+
+        cdef size_t i
+
+        cdef bint b1_block_mode = self._isIndexBlock(idx_b1)
+        cdef bint b2_block_mode = self._isIndexBlock(idx_b2)
+
+        cdef ar[int, mode="c"] idx_1, idx_2
+        cdef size_t b1_lb = 50, b2_lb = 50
+
+        if b1_block_mode:
+            b1_lb = self._indexBlockLower(idx_b1)
+        else:
+            idx_1 = idx_b1
+
+        if b2_block_mode:
+            b2_lb = self._indexBlockLower(idx_b2)
+        else:
+            idx_2 = idx_b2
+
+        cdef ar[uint_t, mode="c"] idx = empty(2, npuint)
+
+        cdef ar[double, mode="c"] row = empty(2, npfloat)
+        row[0], row[1] = 1, -1
+
+        cdef list ret_row_idx = [None]*size
+
+        for 0 <= i < size:
+            idx[0] = (b1_lb + i) if b1_block_mode else idx_1[i]
+            idx[1] = (b2_lb + i) if b2_block_mode else idx_2[i]
+
+            ret_row_idx[i] = self._addConstraint(idx, row, ctype, 0)
+
+        return ret_row_idx
+
+    def bindSandwich(self, constrained_indices, sandwich_indices):
+        """
+        Constrains the absolute value of each variable in
+        `constrained_indices` to be less than or equal to the
+        corresponding variable in `sandwich_indices`
+
+        `constrained_indices` and `sandwich_indices` must specify the
+        same number of indices, and can be any valid specification for
+        an index group.
+
+        Returns the corresponding list of rows.
+        """
+
+        ########################################
+        # Validate the indices
+        
+        cdef ar idx_b1, idx_b2
+        cdef size_t size
+
+        idx_b1, idx_b2, size = self.validateConvienceIndexPair(constrained_indices, sandwich_indices)
+
+        ########################################
+        # Now loop through and take care of binding the indices
+
+        cdef size_t i
+
+        cdef bint b1_block_mode = self._isIndexBlock(idx_b1)
+        cdef bint b2_block_mode = self._isIndexBlock(idx_b2)
+
+        cdef ar[int, mode="c"] idx_1, idx_2
+        cdef size_t b1_lb = 50, b2_lb = 50
+
+        if b1_block_mode:
+            b1_lb = self._indexBlockLower(idx_b1)
+        else:
+            idx_1 = idx_b1
+
+        if b2_block_mode:
+            b2_lb = self._indexBlockLower(idx_b2)
+        else:
+            idx_2 = idx_b2
+
+        cdef ar[uint_t, mode="c"] idx = empty(2, npuint)
+
+        cdef ar[double, mode="c"] row_1 = empty(2, npfloat)
+        cdef ar[double, mode="c"] row_2 = empty(2, npfloat)
+        
+        row_1[0], row_1[1] = 1, -1
+        row_2[0], row_2[1] = -1, -1
+
+        cdef list ret_row_idx = [None]*size*2
+
+        for 0 <= i < size:
+            idx[0] = (b1_lb + i) if b1_block_mode else idx_1[i]
+            idx[1] = (b2_lb + i) if b2_block_mode else idx_2[i]
+
+            ret_row_idx[2*i] = self._addConstraint(idx, row_1, "<=", 0)
+            ret_row_idx[2*i+1] = self._addConstraint(idx, row_2, "<=", 0)
+
+        return ret_row_idx
+
+
+
+
+    
+    cdef tuple validateConvienceIndexPair(self, indices_1, indices_2):
+        # returns tuple of block1, block2, size
+
+        cdef bint idx_b1_is_known = self._isCurrentIndexBlock(indices_1)
+        cdef bint idx_b2_is_known = self._isCurrentIndexBlock(indices_2)
+        
+        cdef ar idx_b1, idx_b2 
+        cdef size_t idx_block_1_size, idx_block_2_size
+
+        # Have to choose how to set these to handle the case of one
+        # string being implicitly defined
+
+        if not idx_b1_is_known and not idx_b2_is_known:
+            raise ValueError("Both index groups implicitly defined.")
+
+        elif idx_b1_is_known and not idx_b2_is_known:
+            idx_b1 = self._resolveIdxBlock(indices_1, 1)
+            idx_block_1_size = self._indexBlockSize(idx_b1)
+            idx_b2 = self._resolveIdxBlock(indices_2, idx_block_1_size)
+            idx_block_2_size = self._indexBlockSize(idx_b2)
+
+        elif not idx_b1_is_known and idx_b2_is_known:
+            idx_b2 = self._resolveIdxBlock(indices_2, 1)
+            idx_block_2_size = self._indexBlockSize(idx_b2)
+            idx_b1 = self._resolveIdxBlock(indices_1, idx_block_2_size)
+            idx_block_1_size = self._indexBlockSize(idx_b1)
+
+        else:
+            idx_b2 = self._resolveIdxBlock(indices_2, 1)
+            idx_block_2_size = self._indexBlockSize(idx_b2)
+            idx_b1 = self._resolveIdxBlock(indices_1, 1)
+            idx_block_1_size = self._indexBlockSize(idx_b1)
+            
+        if idx_block_1_size != idx_block_2_size:
+            raise ValueError("Index blocks have inconsistent sizes.")
+
+        return (idx_b1, idx_b2, idx_block_1_size)
 
     ############################################################
     # Functions dealing with the constraint
@@ -1588,8 +1813,6 @@ cdef class LPSolve(object):
         set_scaling(self.lp, scaling_option)
         set_verbose(self.lp, option_dict["verbosity"])
 
-        #print "start_basis", start_basis
-
         if start_basis is not None:
             assert start_basis.shape[0] in [full_basis_size, basic_basis_size]
             set_basis(self.lp, <int*>start_basis.data, start_basis.shape[0] == full_basis_size)
@@ -2001,7 +2224,6 @@ cdef class LPSolve(object):
 
         setupConstraint(cstr, row_idx, idx, row, ctypestr, rhs)
 
-
     cdef _addConstraint(self, ar idx, ar row, str ctypestr, rhs):
         cdef size_t row_idx = self.n_rows
         self.setConstraint(row_idx, idx, row, ctypestr, rhs)
@@ -2163,7 +2385,13 @@ cdef str _valid_constraint_identifiers = \
     ','.join(["'%s'" % cid for cid,ct in _constraint_type_list])
 
 
-cdef inline getCType(str ctypestr):
+cdef inline isSimpleCType(str ctypestr):
+    cdef int ctype = getCType(ctypestr)
+    
+    return ctype in [constraint_leq, constraint_geq, constraint_equal]
+
+
+cdef inline getCType(str ctypestr):  # no return typing to allow exceptions
     try:
         return _constraint_map[ctypestr]
     except KeyError:
