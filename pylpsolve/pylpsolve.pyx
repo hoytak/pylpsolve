@@ -154,6 +154,58 @@ cdef struct _Constraint
 class LPSolveException(Exception): pass
 
 ######################################################################
+# Constraint types
+
+DEF constraint_free    = 0
+DEF constraint_leq     = 1
+DEF constraint_geq     = 2
+DEF constraint_equal   = 3
+DEF constraint_in      = 4
+
+cdef list _constraint_type_list = [
+    ("<"      , constraint_leq),
+    ("<="     , constraint_leq),
+    ("=<"     , constraint_leq),
+    ("leq"    , constraint_leq),
+    ("lt"     , constraint_leq),
+    (">"      , constraint_geq),
+    (">="     , constraint_geq),
+    ("=>"     , constraint_geq),
+    ("geq"    , constraint_geq),
+    ("gt"     , constraint_geq),
+    ("="      , constraint_equal),
+    ("=="     , constraint_equal),
+    ("eq"     , constraint_equal),
+    ("equal"  , constraint_equal),
+    ("in"     , constraint_in),
+    ("between", constraint_in),
+    ("range"  , constraint_in)]
+
+cdef dict _constraint_type_rev_map = {
+    constraint_leq    : "<=",
+    constraint_equal  : "=",
+    constraint_geq    : ">=",
+    constraint_in     : "in"}
+
+cdef inline str getReverseCType(int ctype):
+    return _constraint_type_rev_map[ctype]
+
+cdef dict _constraint_map = dict(_constraint_type_list)
+cdef str _valid_constraint_identifiers = \
+    ','.join(["'%s'" % cid for cid,ct in _constraint_type_list])
+
+
+cdef inline bint isSimpleCType(int ctype):
+    return ctype in [constraint_leq, constraint_geq, constraint_equal]
+
+cdef inline getCType(str ctypestr):  # no return typing to allow exceptions
+    try:
+        return _constraint_map[ctypestr]
+    except KeyError:
+        raise ValueError("Constraint type '%s' not recognized." % ctypestr)
+
+
+######################################################################
 # External imports
 
 cdef extern from "lpsolve/lp_lib.h":
@@ -895,7 +947,7 @@ cdef class LPSolve(object):
     ############################################################
     # Methods dealing with constraints
 
-    cpdef addConstraint(self, coefficients, str ctype, rhs):
+    cpdef addConstraint(self, coefficients, str ctypestr, rhs):
         """        
         Adds a constraint, or set of constraints to the lp.
 
@@ -923,6 +975,8 @@ cdef class LPSolve(object):
                 
         cdef bint is_list_sequence, is_numerical_sequence
         cdef tuple t_coeff
+
+        cdef int ctype = getCType(ctypestr)
 
         # What we do depends on the type
         coefftype = type(coefficients)
@@ -976,27 +1030,30 @@ cdef class LPSolve(object):
             return self._addConstraintDict(<dict>coefficients, ctype, rhs)
 
         elif isnumeric(coefficients):
-            return self.addConstraint( [coefficients], ctype, rhs)
+            return self._addConstraintArray(None, [coefficients], ctype, rhs)
 
         else:
             raise ValueError("Coefficients must be dict, list, 2-tuple, or array.")
 
 
-    cdef _addConstraintArray(self, t_idx, t_val, str ctype, rhs):
+    cdef _addConstraintArray(self, t_idx, t_val, int ctype, rhs):
         # If the values can be interpreted as an array
 
         cdef bint val_is_scalar = isnumeric(t_val)
 
         cdef ar A = self._resolveValues(t_val, False)
         cdef size_t i
-        cdef ar[double] rhs_a
 
         if A.ndim == 1:
             idx = self._resolveIdxBlock(t_idx, A.shape[0])
             return self._addConstraint(idx, A, ctype, rhs)
 
         elif A.ndim == 2:
+            
+            # For this, we need some extra work to resolve the 
+
             idx = self._resolveIdxBlock(t_idx, A.shape[1])
+            
             
             rhs_a = self._resolveValues(rhs, True)
             
@@ -1012,11 +1069,11 @@ cdef class LPSolve(object):
             assert False
 
 
-    cdef _addConstraintDict(self, dict d, str ctype, rhs):
+    cdef _addConstraintDict(self, dict d, int ctype, rhs):
         I, V = self._getArrayPairFromDict(d)
         return self._addConstraint(I, V, ctype, rhs)
             
-    cdef _addConstraintTupleList(self, list l, str ctype, rhs):
+    cdef _addConstraintTupleList(self, list l, int ctype, rhs):
         I, V = self._getArrayPairFromTupleList(l)
         return self._addConstraint(I, V, ctype, rhs)
 
@@ -1024,7 +1081,7 @@ cdef class LPSolve(object):
     ############################################################
     # Convenience functions dealing with common constraint types
 
-    def bindEach(self, indices_1, str ctype, indices_2):
+    def bindEach(self, indices_1, str ctypestr, indices_2):
         """
         Constrains each variable in `index_group_1` by the
         corresponding variable in `index_group_2` using the ctype
@@ -1044,6 +1101,8 @@ cdef class LPSolve(object):
 
         ########################################
         # Check to make sure the constraint type is okay for this
+
+        cdef int ctype = getCType(ctypestr)
 
         if not isSimpleCType(ctype):
             raise ValueError("Constraint type must be <=, =, or >=.")
@@ -1148,8 +1207,8 @@ cdef class LPSolve(object):
             idx[0] = (b1_lb + i) if b1_block_mode else idx_1[i]
             idx[1] = (b2_lb + i) if b2_block_mode else idx_2[i]
 
-            ret_row_idx[2*i] = self._addConstraint(idx, row_1, "<=", 0)
-            ret_row_idx[2*i+1] = self._addConstraint(idx, row_2, "<=", 0)
+            ret_row_idx[2*i] = self._addConstraint(idx, row_1, constraint_leq, 0)
+            ret_row_idx[2*i+1] = self._addConstraint(idx, row_2, constraint_leq, 0)
 
         return ret_row_idx
 
@@ -2214,7 +2273,7 @@ cdef class LPSolve(object):
     ############################################################
     # Methods for dealing with the constraint buffers
 
-    cdef setConstraint(self, size_t row_idx, ar idx, ar row, str ctypestr, rhs):
+    cdef setConstraint(self, size_t row_idx, ar idx, ar row, int ctype, rhs):
         
         # First get the right cstr
         cdef _Constraint* cstr = self.getConstraintStruct(row_idx)
@@ -2222,11 +2281,11 @@ cdef class LPSolve(object):
         if cstr == NULL:
             raise MemoryError
 
-        setupConstraint(cstr, row_idx, idx, row, ctypestr, rhs)
+        setupConstraint(cstr, row_idx, idx, row, ctype, rhs)
 
-    cdef _addConstraint(self, ar idx, ar row, str ctypestr, rhs):
+    cdef _addConstraint(self, ar idx, ar row, int ctype, rhs):
         cdef size_t row_idx = self.n_rows
-        self.setConstraint(row_idx, idx, row, ctypestr, rhs)
+        self.setConstraint(row_idx, idx, row, ctype, rhs)
         return row_idx
 
     cdef _Constraint* getConstraintStruct(self, size_t row_idx):
@@ -2352,51 +2411,6 @@ cdef class LPSolve(object):
 # considerations with lp_solve
 
 
-############################################################
-# Constraint types
-
-DEF constraint_free    = 0
-DEF constraint_leq     = 1
-DEF constraint_geq     = 2
-DEF constraint_equal   = 3
-DEF constraint_in      = 4
-
-cdef list _constraint_type_list = [
-    ("<"      , constraint_leq),
-    ("<="     , constraint_leq),
-    ("=<"     , constraint_leq),
-    ("leq"    , constraint_leq),
-    ("lt"     , constraint_leq),
-    (">"      , constraint_geq),
-    (">="     , constraint_geq),
-    ("=>"     , constraint_geq),
-    ("geq"    , constraint_geq),
-    ("gt"     , constraint_geq),
-    ("="      , constraint_equal),
-    ("=="     , constraint_equal),
-    ("eq"     , constraint_equal),
-    ("equal"  , constraint_equal),
-    ("in"     , constraint_in),
-    ("between", constraint_in),
-    ("range"  , constraint_in)]
-
-cdef dict _constraint_map = dict(_constraint_type_list)
-cdef str _valid_constraint_identifiers = \
-    ','.join(["'%s'" % cid for cid,ct in _constraint_type_list])
-
-
-cdef inline isSimpleCType(str ctypestr):
-    cdef int ctype = getCType(ctypestr)
-    
-    return ctype in [constraint_leq, constraint_geq, constraint_equal]
-
-
-cdef inline getCType(str ctypestr):  # no return typing to allow exceptions
-    try:
-        return _constraint_map[ctypestr]
-    except KeyError:
-        raise ValueError("Constraint type '%s' not recognized." % ctypestr)
-
 ######################################################################
 # Now functions and a struct dealing with the constraints
 
@@ -2420,7 +2434,7 @@ cdef struct _Constraint:
 ########################################
 # Methods to deal with this constraint
 
-cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, str ctypestr, rhs):
+cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, int ctype, rhs):
 
     # see if we need to clear things
     assert cstr.n == 0
@@ -2429,11 +2443,11 @@ cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, s
 
     ########################################
     # Check possible bad configurations of ctype, rhs
-    cstr.ctype = getCType(ctypestr)
+    cstr.ctype = ctype
 
     if cstr.ctype in [constraint_leq, constraint_geq, constraint_equal]:
         if not isnumeric(rhs):
-            raise TypeError("Constraint type '%s' requires right hand side to be scalar." % ctypestr)
+            raise TypeError("Constraint type '%s' requires right hand side to be scalar." % getReverseCType(ctype))
 
         cstr.rhs1 = <double>rhs
     elif cstr.ctype == constraint_in:
@@ -2442,7 +2456,7 @@ cdef inline setupConstraint(_Constraint* cstr, size_t row_idx, ar idx, ar row, s
         elif type(rhs) is list and len(<list>rhs) == 2:
             cstr.rhs1, cstr.rhs2 = (<list>rhs)
         else:
-            raise TypeError("Constraint type '%s' requires right hand side to be either 2-tuple or 2-list." % ctypestr)
+            raise TypeError("Constraint type '%s' requires right hand side to be either 2-tuple or 2-list."  % getReverseCType(ctype))
     else:
         assert False
 
