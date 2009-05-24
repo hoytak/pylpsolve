@@ -401,18 +401,45 @@ cdef class LPSolve(object):
     ############################################################
     # Methods concerned with getting and setting the options
 
-    def getOptions(self):
+    cpdef dict getOptionDict(self):
+        """
+        Returns a copy of the dictionary containing all the current
+        options.
+        """
+
         return self.options.copy()
 
-    def setOption(self, str name, value):
+    def getOption(self, str option):
         """
+        Returns the current default value of option `option`.
+        """
+
+        try:
+            return self.options[option]
+        except KeyError:
+            raise ValueError("Option '%s' not valid." % str(option))
+
+    def setOption(self, *args, **kw_options):
+        """
+        Sets the current default value for an option(s).  Options may
+        either be passed in pairs as arguments or as keyword
+        arguments.  Thus the following is valid::
+
+          lp.setOption("pricer", "devex", presolve_rows = True)
+
+        This sets the pricer option to "devex" and presolve_rows to
+        True.
+
+
         Presolve options
         ==================================================
         
-        Available presolve options are::
+        Presolve is off by default, as it prevents specifiying a basis
+        or initial guess or modifying the constraint matrix
+        afterwards.  To turn it on, set any of the options below to
+        True.
 
-          presolve_none:
-            No presolve at all.
+        Available presolve options are::
 
           presolve_rows:
             Presolve rows.
@@ -647,12 +674,25 @@ cdef class LPSolve(object):
 
         """
 
-        cdef str n = name.lower()
-        
-        if n not in self.options:
-            raise ValueError("Option '%s' not valid." % name)
+        if len(args) % 2 != 0:
+            raise ValueError("Non keyword arguments must be in option, value pairs.")
 
-        self.options[n] = value
+        for i, (n, v) in enumerate(zip(args[::2], args[1::2])):
+            if not isinstance(n, str):
+                raise TypeError("Argument %d not str." % 2*i)
+            if n not in self.options:
+                raise ValueError("Option '%s' not valid." % n)
+
+            if n not in kw_options:
+                kw_options[n] = v
+
+        # Check everything, so we reject as a group if one is bad
+        for k in kw_options.iterkeys():
+            if k not in self.options:
+                raise ValueError("Option '%s' not valid." % k)
+
+        # All pass, set them
+        self.options.update(kw_options)
 
 
     ############################################################
@@ -2027,7 +2067,7 @@ cdef class LPSolve(object):
         ########################################
         # Get the current options dict
 
-        cdef dict option_dict = self.getOptions()
+        cdef dict option_dict = self.getOptionDict()
 
         # Make sure that the options given are all valid
         cdef set okay_options = set(option_dict.iterkeys())

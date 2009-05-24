@@ -14,6 +14,7 @@ if __name__ == '__main__':
     import test_graphs
     import test_basis
     import test_convenience
+    import test_options
 
     ts = unittest.TestSuite([
             dtl.loadTestsFromModule(test_blocks),
@@ -24,7 +25,8 @@ if __name__ == '__main__':
             dtl.loadTestsFromModule(test_errorcatch),
             dtl.loadTestsFromModule(test_graphs),
             dtl.loadTestsFromModule(test_basis),
-            dtl.loadTestsFromModule(test_convenience)
+            dtl.loadTestsFromModule(test_convenience),
+            dtl.loadTestsFromModule(test_options)
             ])
 
     if '--verbose' in sys.argv:
