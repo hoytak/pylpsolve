@@ -3,7 +3,7 @@ from copy import deepcopy, copy
 from pylpsolve import LPSolve, LPSolveException
 from numpy import array, ones, eye, float64, uint, zeros
 
-from pylpsolve.graphs import graphCut, maximimzeGraphPotential
+from pylpsolve.graphs import graphCut, maximizeGraphPotential
 
 class TestGraphCuts(unittest.TestCase):
 
@@ -191,7 +191,7 @@ class TestPotentialMaximizing(unittest.TestCase):
         E2d["S"] = makeArray() + makeArray().transpose(1,0,2)
         E2d["d"] = E2
 
-        ret = maximimzeGraphPotential(E1d[opts[0]], E2d[opts[1]])
+        ret = maximizeGraphPotential(E1d[opts[0]], E2d[opts[1]])
 
         self.assert_(len(ret) == len(answer))
 

@@ -369,7 +369,7 @@ cdef labelGraph(int *labels, unsigned int *mapping_S,
 ################################################################################
 # Potential Function Potentials
 
-def maximimzeGraphPotential(E1, E2):
+def maximizeGraphPotential(E1, E2):
     """
     Maximizes a potential function defined by weights on nodes and
     interactions between nodes.  The nodes may be either 0 or 1, and
