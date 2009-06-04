@@ -6,8 +6,8 @@
 debug_mode_c_code = False
 
 source_directory_list = ['pylpsolve']
-compiler_args = []
-link_args = ['-static']
+compiler_args = ['-fPIC']
+link_args = ['-fPIC']
 version = "0.1"
 description="PyLPSolve: Object-oriented wrapper for the lp_solve 5.5 LP solver."
 author = "Hoyt Koepke"
