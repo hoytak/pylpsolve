@@ -323,6 +323,26 @@ class TestPotentialMaximizing(unittest.TestCase):
     def testSimpleIsing_03_ad(self):
         self.checkPFunc(self.ising_03_E1, self.ising_03_E2, self.ising_03_answer, "ad")
 
+
+    ##################################################
+    # Test corner casses
+
+    def testNonExistantE2(self):
+        E1 = [-1,-1,-1, 1, 1, 1]
+
+        r = maximizeGraphPotential(E1, None)
+        
+        self.assert_(r.ndim == 1)
+        self.assert_(r.size == 6)
+        self.assert_(r[0] == 0, "%s != [0,0,0,1,1,1]" % str(r))
+        self.assert_(r[1] == 0, "%s != [0,0,0,1,1,1]" % str(r))
+        self.assert_(r[2] == 0, "%s != [0,0,0,1,1,1]" % str(r))
+        self.assert_(r[3] == 1, "%s != [0,0,0,1,1,1]" % str(r))
+        self.assert_(r[4] == 1, "%s != [0,0,0,1,1,1]" % str(r))
+        self.assert_(r[5] == 1, "%s != [0,0,0,1,1,1]" % str(r))
+        
+        
+
         
 
 if __name__ == '__main__':

@@ -2317,7 +2317,7 @@ cdef class LPSolve(object):
 
     cpdef print_lp(self):
 
-        self.setupLP(self.getOptions())
+        self.setupLP(self.getOptionDict())
         print_lp(self.lp)
         
 
