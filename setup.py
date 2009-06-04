@@ -145,7 +145,7 @@ if __name__ == '__main__':
         return library_includes + (specific_libraries[m] if m in specific_libraries else [])
     
     def get_extra_compile_args(m):
-        return compiler_args + (['-g', '-O0'] if debug_mode_c_code else [])
+        return compiler_args + (['-g', '-O0', '-DCYTHON_REFNANNY'] if debug_mode_c_code else [])
     
     def get_extra_link_args(m):
         return link_args + (['-g'] if debug_mode_c_code else [])
