@@ -1158,7 +1158,7 @@ cdef class LPSolve(object):
     def bindEach(self, indices_1, str ctypestr, indices_2):
         """
         Constrains each variable in `index_group_1` by the
-        corresponding variable in `index_group_2` using the ctype
+        corresponding variable in `index_group_2` using the ctypestr
         relationship.  For example::
 
             lp.bindEach("x", "<=", "y")
@@ -1287,9 +1287,6 @@ cdef class LPSolve(object):
         return ret_row_idx
 
 
-
-
-    
     cdef tuple validateConvienceIndexPair(self, indices_1, indices_2):
         # returns tuple of block1, block2, size
 
