@@ -6,10 +6,10 @@
 debug_mode_c_code = False
 
 source_directory_list = ['pylpsolve']
-compiler_args = ['-fPIC']
-link_args = ['-fPIC']
+compiler_args = []
+link_args = []
 version = "0.1"
-description="PyLPSolve: Object-oriented wrapper for the lp_solve 5.5 LP solver."
+description="PyLPSolve: Object-oriented wrapper for the lpsolve5.5 LP solver."
 author = "Hoyt Koepke"
 author_email="hoytak@gmail.com"
 name = 'pylpsolve'
@@ -19,7 +19,19 @@ download_url = ""
 
 long_description = \
 """
+PyLPSolve is an object oriented wrapper for the open source LP solver
+lpsolve5.5.  The focus is on usability and integration with existing
+python packages used for scientific programming (i.e. numpy and
+scipy).
 
+One unique feature is a convenient bookkeeping system that allows the
+user to specifiy blocks of variables by string tags, or other index
+block methods, then work with these blocks instead of individual
+indices.  All the elements of the LP are cached until solve is called,
+with memory management and proper sizing of the LP in lpsolve handled
+automatically.  
+
+PyLPSolve is written in cython, with all computation 
 """
 
 classifiers = [
@@ -36,14 +48,12 @@ classifiers = [
 
 numpy_needed = True
 
-
 # Stuff for extension module stuff
 extra_library_dirs = []
 extra_include_dirs = []
 
 library_includes = ['lpsolve55', 'colamd']
 specific_libraries = {}
-
 
 ################################################################################
 # Shouldn't have to adjust anything below this line...
@@ -56,7 +66,6 @@ import sys
 
 from distutils.core import setup
 from distutils.extension import Extension
-
 
 if numpy_needed:
     import numpy

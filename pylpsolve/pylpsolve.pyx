@@ -307,9 +307,6 @@ DEF m_UpdatingModel = 1
 DEF cStructBufferSize = 128  
 
 cdef class LPSolve(object):
-    """
-    The class wrapping the lp_solve api 
-    """
 
     cdef lprec *lp
     cdef size_t n_columns, n_rows
@@ -546,7 +543,7 @@ cdef class LPSolve(object):
              Steepest Edge.
 
         
-        Addition pricer options, which may be set using True::
+        Additional pricer options, which may be set using True::
     
           price_primalfallback: 
             In case of Steepest Edge, fall back to DEVEX in primal.
@@ -618,7 +615,7 @@ cdef class LPSolve(object):
 
 
         In addition, the following options may be passed as options
-        (e.g. ``scale_integers = True``).
+        (e.g. ``scale_integers = True``):
 
           scale_logarithmic:
 	    Scale to convergence using logarithmic mean of all values.
@@ -666,7 +663,6 @@ cdef class LPSolve(object):
         Other miscilaneous options::
         ========================================
 
-
           verbosity:
             Sets the verbosity level of printed information.  Default
             is 1, which only prints errors; levels 1-5 are available,
@@ -700,19 +696,29 @@ cdef class LPSolve(object):
 
     def getVariables(self, a1, a2 = None):
         """
-        Returns a new or current block of 'size' variable indices to
-        be used in the current LP.  The return value is a 2-tuple,
-        ``(low_index, high_index)``, such that
-        ``high_index-low_index=size``  
-        
-        If `name` is not None, then other functions
-        (e.g. addConstraint) can accept this accept this string as the
-        index argument.
+        Returns a new or current block of variable indices to be used
+        in the current LP.  The return value is a 2-tuple,
+        ``(low_index, high_index)``.  This block of indices may be
+        used as the index block argument to any function accepting an
+        index block as an argument.  Note that such index blocks can
+        be created implicitly.
 
-        # Put in use cases 
+        It may be called in one of three ways, with `name` being a
+        string and `size` being a positive integer:
 
-        # Blah
+          getVariables(name, size):
+            Returns a block named `name` with `size` variables.  If
+            block `name` does not currently exist, it is reserved and
+            may be refered to either by name or by the returned index
+            tuple.  If a block named `name` does exist, it is
+            returned; a ValueError is raised if the sizes don't match.
 
+          getVariables(name): 
+            Returns an index block named `name`.  If it does not
+            already exist, a value error is raised.
+
+          getVariables(size):
+            Returns a new, unnamed index block of `size` variables.
         """
         
         cdef str name
@@ -1157,18 +1163,18 @@ cdef class LPSolve(object):
 
     def bindEach(self, indices_1, str ctypestr, indices_2):
         """
-        Constrains each variable in `index_group_1` by the
-        corresponding variable in `index_group_2` using the ctypestr
-        relationship.  For example::
+        Constrains *each* variable in `indices_1` by the corresponding
+        variable in `indices_2` using the `ctypestr` relationship.
+        For example::
 
-            lp.bindEach("x", "<=", "y")
+          lp.bindEach("x", "<=", "y")
 
-        adds constraints to the LP such that each variable in ``x`` is
-        less than or equal to the corresponding variable in ``y``.  
+        adds constraints to the LP such that *each* variable in ``x``
+        is less than or equal to the corresponding variable in ``y``.
 
-        `index_group_1` and `index_group_2` must specify the same
-        number of indices, and can be any valid specification for an
-        index group.
+        `indices_1` and `indices_2` must specify the same number of
+        indices, and can be any valid specification for an index
+        group.
 
         Returns the corresponding list of rows.
         """
@@ -1489,37 +1495,38 @@ cdef class LPSolve(object):
     ############################################################
     # Methods dealing with variable bounds
 
-    cpdef setUnbounded(self, var):
+    cpdef setUnbounded(self, indices):
         """
-        Sets the variable `var` to unbounded (default is >=0).  This
-        is equivalent to setLowerBound(None), setUpperBound(None)
+        Sets the index block `indices` to be unbounded (default is
+        >=0).  This is equivalent to ``setLowerBound(indices, None)``,
+        ``setUpperBound(indices, None)``
         """
         
-        self.setLowerBound(var, None)
-        self.setUpperBound(var, None)
+        self.setLowerBound(indices, None)
+        self.setUpperBound(indices, None)
 
-    cpdef setLowerBound(self, var, lb):
+    cpdef setLowerBound(self, indices, lb):
         """
-        Sets the lower bound of variable(s) `var` to lb.  If lb is None,
-        then it sets the lower bound to -Infinity.
+        Sets the lower bound of index block `indices` to lb.  If lb is
+        None, then the lower bound is set to -infinity.
 
-        `var` may be a single index, an array, list, or tuple of
-        indices, or the name of a block of indices.  If multiple
-        indices are specified, then lb may either be a scalar or a
-        vector of the same length as the number of indices.
+        `indices` may be a single index, an array, list, or index
+        tuple, or the name of an index block.  If multiple indices are
+        specified, then `lb` may either be a scalar or a vector of the
+        same length as the number of indices.
         """
 
-        self._setBound(var, lb, True)
+        self._setBound(indices, lb, True)
 
-    cpdef setUpperBound(self, var, ub):
+    cpdef setUpperBound(self, indices, ub):
         """
-        Sets the upper bound of variable idx to ub.  If ub is None,
-        then it sets the upper bound to Infinity.
+        Sets the upper bound of index block `indices` to ub.  If lb is
+        None, then the upper bound is set to +infinity.
 
-        `var` may be a single index, an array, list, or tuple of
-        indices, or the name of a block of indices.  If multiple
-        indices are specified, then ub may either be a scalar or a
-        vector of the same length as the number of indices.
+        `indices` may be a single index, an array, list, or index
+        tuple, or the name of an index block.  If multiple indices are
+        specified, then `ub` may either be a scalar or a vector of the
+        same length as the number of indices.
         """
 
         self._setBound(var, ub, False)
@@ -2023,8 +2030,7 @@ cdef class LPSolve(object):
 
     def solve(self, **options):
         """
-        Solves the given model.  `mode` may be either "minimize"
-        (default) or "maximize".
+        Solves the given model.  
 
         Configuration
         ========================================
@@ -2053,12 +2059,12 @@ cdef class LPSolve(object):
             The LP is initialized by first constructing a basis given
             the guessed variable values, then initializing it with
             that basis.  If both basis and guess are given as options,
-            guess is ignored. 
+            guess is ignored.
 
-            Note that if the parameter 'error_on_bad_guess' is True,
-            an exception is raised if the guess fails.  The default is
-            False, which causes a warning to be generated.
-        
+            Note that if the parameter 'error_on_bad_guess' is
+            specified and True, an exception is raised if the guess
+            fails.  The default is False, which causes a warning to be
+            generated.
         """
 
         ########################################
@@ -2152,8 +2158,6 @@ cdef class LPSolve(object):
             raise LPSolveException("Error 13: No feasible B&B solution found")
 
         # And we're done
-        
-
 
     def getSolution(self, indices = None):
         """
@@ -2275,7 +2279,9 @@ cdef class LPSolve(object):
     def getSolutionDict(self):
         """
         Returns a dictionary of all the solutions to all of the
-        previously named variable blocks.
+        previously named variable blocks.  The keys in this dictionary
+        are variable block names, and the values are arrays containing
+        the solution variables.
         """
 
         cdef dict ret = {}
@@ -2288,7 +2294,8 @@ cdef class LPSolve(object):
 
     cpdef real getObjectiveValue(self):
         """
-        Returns the value of the objective function of the LP.
+        Returns the value of the objective function of the LP.  If
+        `solve()` has not been called, an LPSolveException is raised.
         """
 
         if self.lp == NULL:
@@ -2296,9 +2303,12 @@ cdef class LPSolve(object):
 
         return get_objective(self.lp)
 
-    def getBasis(self, include_dual_basis = True):
+    def getBasis(self, bint include_dual_basis = True):
         """
-        Returns the basis from the previous run.
+        Returns the basis from the previous run.  If
+        `include_dual_basis` is True, then the basis for both the
+        primal and the dual solutions are specified, otherwise only
+        the primal is returned.
         """
 
         if self.lp == NULL:
@@ -2318,10 +2328,13 @@ cdef class LPSolve(object):
         print_lp(self.lp)
         
 
-    def getInfo(self, info):
+    def getInfo(self, str info):
         """
         Returns a specific statistic from the latest run of the lp.
-        The available statistics are 
+        The current available statistics are:
+
+          Iterations:
+            The number of iterations required to solve the model.
         """
         
         if self.lp == NULL:
