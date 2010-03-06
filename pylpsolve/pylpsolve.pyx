@@ -1003,20 +1003,20 @@ cdef class LPSolve(object):
         and have the same length/number of columns as the number of
         columns in the lp.  If it is 2 dimensions, each row
         corresponds to a constraint, and `rhs` must be a vector with a
-        coefficient for each row.  In this case, ctype must
-        be the same for all rows.
+        coefficient for each row.  In this case, ctype must be the
+        same for all rows.
 
         If it is a dictionary, the keys of the dictionary are the
         indices of the non-zero values which are given by the
-        corresponding values.  
+        corresponding values.
 
         If it is a (index array, value array) pair, the corresponding
         pairs have the same behavior as in the dictionary case.
 
-        `ctype` is a string determining the type of
-        inequality or equality in the constraint.  The following are
-        all valid identifiers: '<', '<=', '=<', 'lt', 'leq'; '>',
-        '>=', '=>', 'gt', 'geq', '=', '==', 'equal', and 'eq'. 
+        `ctype` is a string determining the type of inequality or
+        equality in the constraint.  The following are all valid
+        identifiers: '<', '<=', '=<', 'lt', 'leq'; '>', '>=', '=>',
+        'gt', 'geq', '=', '==', 'equal', and 'eq'.
         """
                 
         cdef bint is_list_sequence, is_numerical_sequence
@@ -1529,7 +1529,7 @@ cdef class LPSolve(object):
         same length as the number of indices.
         """
 
-        self._setBound(var, ub, False)
+        self._setBound(indices, ub, False)
         
 
     cdef _setBound(self, varidx, b, bint lower_bound):
@@ -1543,7 +1543,6 @@ cdef class LPSolve(object):
 
         elif type(b) is ndarray:
             b[~isfinite(b)] = -infty if lower_bound else infty
-
 
         if lower_bound:
             self._stackOnInterpretedKeyValuePair(
