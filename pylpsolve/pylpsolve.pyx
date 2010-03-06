@@ -997,8 +997,23 @@ cdef class LPSolve(object):
         """        
         Adds a constraint, or set of constraints to the lp.
 
-        `coefficients` may be either a single array, a dictionary, or
-        a 2-tuple with the form (index block, value array).  In the
+        Coefficients
+        ========================================
+
+        The type of `coefficients` determines how this method behaves.
+        It can take a number of forms; each of the forms below is
+        valid:
+
+          Scalar, list or 1d numpy array (e.g. ``1.5``, ``[1, 2, 3]``):
+            Implicitly creates new variables 
+        
+
+        
+
+        
+
+
+         In the
         case of a single array, it must be either 1 or 2 dimensional
         and have the same length/number of columns as the number of
         columns in the lp.  If it is 2 dimensions, each row
@@ -1018,6 +1033,11 @@ cdef class LPSolve(object):
         identifiers: '<', '<=', '=<', 'lt', 'leq'; '>', '>=', '=>',
         'gt', 'geq', '=', '==', 'equal', and 'eq'.
         """
+
+        print "="*50
+        print coefficients
+        print "RHS>>>>>"
+        print rhs
                 
         cdef bint is_list_sequence, is_numerical_sequence
         cdef tuple t_coeff
