@@ -3,7 +3,7 @@ An accompaning module that contains verious functions for operations
 on graphs.  
 """
 
-from pylpsolve import LPSolve
+from pylpsolve import LP
 from numpy cimport ndarray as ar
 from numpy import int32,uint32,int64, uint64, float32, float64,\
     uint, empty, ones, zeros, uint, arange, isscalar, amax, amin, \
@@ -232,7 +232,7 @@ cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity,
     if sink > nV or sink < 0:
         raise ValueError("Sink index not valid.")
     
-    lp = LPSolve()
+    lp = LP()
 
     vblock = lp.getVariables("p", nV)
 

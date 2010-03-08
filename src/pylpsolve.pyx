@@ -151,7 +151,7 @@ cdef struct _Constraint
 ######################################################################
 # Exceptions
 
-class LPSolveException(Exception): pass
+class LPException(Exception): pass
 
 ######################################################################
 # Constraint types
@@ -306,7 +306,7 @@ DEF m_UpdatingModel = 1
 # This is the size of the constraint buffer blocks
 DEF cStructBufferSize = 128  
 
-cdef class LPSolve(object):
+cdef class LP(object):
 
     cdef lprec *lp
     cdef size_t n_columns, n_rows
@@ -356,6 +356,10 @@ cdef class LPSolve(object):
             delete_lp(self.lp)
 
     def clear(self):
+        """
+        Clears the entire LP and all given information.
+        """
+
         self._clear(False)
 
     cdef _clear(self, bint restartable_mode):
@@ -401,7 +405,7 @@ cdef class LPSolve(object):
     cpdef dict getOptionDict(self):
         """
         Returns a copy of the dictionary containing all the current
-        options.
+        default options.  
         """
 
         return self.options.copy()
@@ -995,50 +999,173 @@ cdef class LPSolve(object):
 
     cpdef addConstraint(self, coefficients, str ctypestr, rhs):
         """        
-        Adds a constraint, or set of constraints to the lp.
+        Adds a constraint or set of constraints to the lp, returning
+        the indices of the corresponding rows.
 
-        Coefficients
+        The non-zero coefficients in the constraint are given by the
+        `coefficients` argument, which can take several different
+        forms as outlined below. The `ctypestr` parameter gives the
+        type of constraint, and the `rhs` parameter gives the
+        right-hand-side bound on the constraint.  For example::
+
+           lp.addConstraint([1,1,1], "<=", 2)
+
+        would create a block of three new variables with a sum upper
+        bounded by 2.  Similarly, in 2d::
+
+           lp.addConstraint( ("b1", [ [1,1,0], [0,1,1] ]), "<=", [3, 4])
+
+        would add two constraints to the LP in variable block "b1"
+        which has three variables in it.  (If it does not exist, it is
+        implicitly created with three variables; if it does exist then
+        an exception is raised if three variables are not supplied.)
+        If the variables in the "b1" block are `x`, `y`, and `z`, the
+        constraints would look like::
+
+           .. math:: 
+              \begin{array}{l} 
+              x + y \leq 3 \\ 
+              y + z \leq 4 
+              \end{array}
+
+        More detailed examples are given after specifying the
+        intuition behind these constraint settings.
+
+        Specifying Coefficients
         ========================================
 
-        The type of `coefficients` determines how this method behaves.
-        It can take a number of forms; each of the forms below is
-        valid:
+        Coefficients can be 1d arrays, 2d arrays, or single scalars.
+        1d arrays can be given either as python lists or as numpy
+        arrays.  2d arrays can be given as nested lists, a list of 1d
+        arrays, a 2d numpy array or matrix, or as a 2d scipy sparse
+        array.  Scalars can be used to specify a single variable.
 
-          Scalar, list or 1d numpy array (e.g. ``1.5``, ``[1, 2, 3]``):
-            Implicitly creates new variables 
+        If there is any inconsistency with array sizes or shape or a
+        mismatch between expected number of variables and what is
+        given, an exception is raised.
+
+        Specifying Variables
+        ========================================
+
+        Which variables that given coefficients correspond to is
+        specified by a corresponding index block.
+
+        Variable blocks corresponding to coefficients are specified by
+        replacing the `coefficients` term with ``(index block,
+        coefficients)``, a 2-tuple.
+
+        This index block is given in one of several forms.  The
+        variable block may be specified in any of the standard ways --
+        by name, a ``(start, end)`` tuple, or an array/list of index
+        variables.  Like C, variable indexing starts at 0.
+
+        Specifying multiple index blocks in the same constraint is
+        done by replacing the ``(index block, coefficients)`` 2-tuple
+        with a list of such 2-tuples.  For example, if ``"a"``
+        specifies indices 0 and 1, and ``"b"`` specifies indices 2,3,
+        and 4, the following::
         
+           lp.addConstraint([("a", [1,2]), ("b", [-1,-2,0])], "<=", 5)
 
+        would specify the constraint::
+
+           .. math:: x_0 + 2x_1 - x_2 -2x_3 \leq 5
+
+        Constraint Type
+        ========================================
         
+        There are four possible types of constraint supported, equal,
+        less-than-or-equal, greater-than-or-equal, or within an
+        interval (range constraints).  The `ctypestr` argument is a
+        string specifying one of these constraints.  Possible values
+        for `ctypestr` are as follows:
 
+          Equal:
+            ``"=", "==", "equal", "eq"``
+
+          Less than or equal:
+            ``"<", "<=", "=<", "leq", "lt"``
+            
+          Greater than or equal:
+            ``">", ">=", "=>", "geq", "gt"``
+
+          Within an interval: 
+            ``"in", "between", "range"``
+          
+        Right Hand Side 
+        ========================================
+
+        The required type of the `rhs` argument is determined by the
+        specified coefficients and the constraint type:
         
+        For 1d Coefficients:
+          If `ctypestr` specifies an equality or inequality
+          relationship, then `rhs` must be a scalar or a single
+          element array.  If `ctypestr` specifies a range constraint,
+          then it must be a 2-element list or array giving the end
+          points of the constraint.  For example::
 
+            lp.addConstraint([1,2,3], "in", [0,2])
+            
+          or 
 
-         In the
-        case of a single array, it must be either 1 or 2 dimensional
-        and have the same length/number of columns as the number of
-        columns in the lp.  If it is 2 dimensions, each row
-        corresponds to a constraint, and `rhs` must be a vector with a
-        coefficient for each row.  In this case, ctype must be the
-        same for all rows.
+            lp.addConstraint([1,2,3], ">=", 0)
+            lp.addConstraint([1,2,3], "<=", 2)
 
-        If it is a dictionary, the keys of the dictionary are the
-        indices of the non-zero values which are given by the
-        corresponding values.
+          Both specify::
 
-        If it is a (index array, value array) pair, the corresponding
-        pairs have the same behavior as in the dictionary case.
+            .. math:: \begin{array}{l} x_0 + 2x_1 + 3x_2 \geq 0 \\ x_0 + 2x_1 + 3x_2 \leq 2 \end{array}
 
-        `ctype` is a string determining the type of inequality or
-        equality in the constraint.  The following are all valid
-        identifiers: '<', '<=', '=<', 'lt', 'leq'; '>', '>=', '=>',
-        'gt', 'geq', '=', '==', 'equal', and 'eq'.
+        For 2d Coefficients:
+
+          If `ctypestr` specifies an equality or inequality
+          relationship, then `rhs` can be either a scalar or a 1d
+          array/list.  If it is a scalar, than all the constraints
+          share the same bound.  If it is a 1d array or list, then it
+          elements correspond to the constraints on the specified rows.  
+
+          If it is a range constraint, then `rhs` must be a 2 element
+          list, with the two elements giving the lower and upper
+          bounds.  Each of these may be either a scalar or a 1d
+          array/list; if a scalar, all rows share the same bound,
+          otherwise the array/list elements correspond to the rows.
+
+          For example::
+
+            lp.addConstraint( [[1,1,0],[0,1,2]], "<=", 5) 
+            
+          or::
+            
+            lp.addConstraint( [[1,1,0],[0,1,2]], "<=", [5,5])
+
+          both specify the constraints:
+
+            .. math:: \begin{array}{l} x_0 + x_1 \leq 5 \\ x_1 + 2x_2 \leq 5 \end{array}
+       
+          And::
+
+            lp.addConstraint( [[1,1,0],[0,1,2]], "in", [1, 5]) 
+
+            lp.addConstraint( [[1,1,0],[0,1,2]], "in", [[1,1], [5,5]]) 
+
+            lp.addConstraint( [[1,1,0],[0,1,2]], "in", [1, [5,5]]) 
+
+          all specify the constraints::
+
+            .. math:: \begin{array}{l} 
+                         x_0 + x_1  \leq 5 \\ 
+                         x_0 + x_1  \geq 1 \\ 
+                         x_1 + 2x_2 \geq 1 \\ 
+                         x_1 + 2x_2 \leq 5 
+                      \end{array}
+
+        Examples
+        ========================================
+
+        We present several detailed examples.
+
         """
 
-        print "="*50
-        print coefficients
-        print "RHS>>>>>"
-        print rhs
-                
         cdef bint is_list_sequence, is_numerical_sequence
         cdef tuple t_coeff
 
@@ -2005,7 +2132,7 @@ cdef class LPSolve(object):
                 error_msg = "Finding starting basis from guess vector failed; discarding."
 
                 if error_on_bad_guess:
-                    raise LPSolveException(error_msg)
+                    raise LPException(error_msg)
                 else:
                     warnings.warn(error_msg)
                     return None
@@ -2140,22 +2267,22 @@ cdef class LPSolve(object):
             warnings.warn("Solver solution suboptimal")
         elif ret == 2:
             # INFEASIBLE (2) 	The model is infeasible
-            raise LPSolveException("Error 2: Model infeasible")
+            raise LPException("Error 2: Model infeasible")
         elif ret == 3:
             # UNBOUNDED (3) 	The model is unbounded
-            raise LPSolveException("Error 3: Model unbounded")
+            raise LPException("Error 3: Model unbounded")
         elif ret == 4:
             # DEGENERATE (4) 	The model is degenerative
-            raise LPSolveException("Error 4: Model degenerate")
+            raise LPException("Error 4: Model degenerate")
         elif ret == 5:
             # NUMFAILURE (5) 	Numerical failure encountered
-            raise LPSolveException("Error 5: Numerical failure encountered")
+            raise LPException("Error 5: Numerical failure encountered")
         elif ret == 6:
             # USERABORT (6) 	The abort routine returned TRUE. See put_abortfunc
-            raise LPSolveException("Error 6: Solver aborted")
+            raise LPException("Error 6: Solver aborted")
         elif ret == 7:
             # TIMEOUT (7) 	A timeout occurred. Indicates timeout was set via set_timeout
-            raise LPSolveException("Error 7: Timeout Occurred.")
+            raise LPException("Error 7: Timeout Occurred.")
         elif ret == 9:
             # PRESOLVED (9) The model could be solved by
             # presolve. This can only happen if presolve is active via
@@ -2163,18 +2290,18 @@ cdef class LPSolve(object):
             return
         elif ret == 10:
             # PROCFAIL (10) 	The B&B routine failed
-            raise LPSolveException("Error 10: The B&B routine failed")
+            raise LPException("Error 10: The B&B routine failed")
         elif ret == 11:
             # PROCBREAK (11) The B&B was stopped because of a
             # break-at-first (see set_break_at_first) or a
             # break-at-value (see set_break_at_value)
-            raise LPSolveException("Error 11: B&B Stopped.")
+            raise LPException("Error 11: B&B Stopped.")
         elif ret == 12:
             # FEASFOUND (12) 	A feasible B&B solution was found
             return 
         elif ret == 13:
              # NOFEASFOUND (13) 	No feasible B&B solution found
-            raise LPSolveException("Error 13: No feasible B&B solution found")
+            raise LPException("Error 13: No feasible B&B solution found")
 
         # And we're done
 
@@ -2202,7 +2329,7 @@ cdef class LPSolve(object):
         """
 
         if self.lp == NULL:
-            raise LPSolveException("Final variables available only after solve() is called.")
+            raise LPException("Final variables available only after solve() is called.")
 
         # Okay, now we've got it
 
@@ -2314,11 +2441,11 @@ cdef class LPSolve(object):
     cpdef real getObjectiveValue(self):
         """
         Returns the value of the objective function of the LP.  If
-        `solve()` has not been called, an LPSolveException is raised.
+        `solve()` has not been called, an LPException is raised.
         """
 
         if self.lp == NULL:
-            raise LPSolveException("Final variables available only after solve() is called.")
+            raise LPException("Final variables available only after solve() is called.")
 
         return get_objective(self.lp)
 
@@ -2331,13 +2458,13 @@ cdef class LPSolve(object):
         """
 
         if self.lp == NULL:
-            raise LPSolveException("Info available only after solve() is called.")
+            raise LPException("Info available only after solve() is called.")
 
         cdef ar[int, mode="c"] basis = empty(
             1 + self.n_columns + (self.n_rows if include_dual_basis else 0), npint)
 
         if not get_basis(self.lp, <int*>basis.data, include_dual_basis):
-            raise LPSolveException("Unknown error while retrieving basis.")
+            raise LPException("Unknown error while retrieving basis.")
 
         return basis
 
@@ -2357,7 +2484,7 @@ cdef class LPSolve(object):
         """
         
         if self.lp == NULL:
-            raise LPSolveException("Info available only after solve() is called.")
+            raise LPException("Info available only after solve() is called.")
 
         cdef int ret_stat
 

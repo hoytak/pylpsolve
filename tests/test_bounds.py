@@ -1,6 +1,6 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
-from pylpsolve import LPSolve, LPSolveException
+from pylpsolve import LP, LPException
 from numpy import array as ar, ones, eye, float64, uint, inf
 
 class TestBounds(unittest.TestCase):
@@ -20,7 +20,7 @@ class TestBounds(unittest.TestCase):
         lbvalues["l"] = [lb, lb, lb]
         lbvalues["a"] = ar([lb, lb, lb])
 
-        lp = LPSolve()
+        lp = LP()
 
         if opts[0] == "N":
             lp.getVariables(indices["N"], 3)
@@ -97,7 +97,7 @@ class TestBounds(unittest.TestCase):
         ubvalues["l"] = [ub, ub, ub]
         ubvalues["a"] = ar([ub, ub, ub])
 
-        lp = LPSolve()
+        lp = LP()
 
         if opts[0] == "N":
             lp.getVariables(indices["N"], 3)
@@ -185,7 +185,7 @@ class TestBounds(unittest.TestCase):
         lbvalues["l"] = [lb, lb, lb]
         lbvalues["a"] = ar([lb, lb, lb])
 
-        lp = LPSolve()
+        lp = LP()
 
         lp.setLowerBound(lbindices, lbvalues[opts[1]])
 

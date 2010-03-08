@@ -1,6 +1,6 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
-from pylpsolve import LPSolve, LPSolveException
+from pylpsolve import LP, LPException
 from numpy import array as ar, ones, eye, float64, uint
 
 # TODO:
@@ -12,7 +12,7 @@ class TestBasic(unittest.TestCase):
     def test01_basic_full(self):
         # test singleton
         
-        lp = LPSolve()
+        lp = LP()
 
         lp.addConstraint( [1], ">", 1)
         lp.setObjective( [1], mode = "minimize")
@@ -29,7 +29,7 @@ class TestBasic(unittest.TestCase):
     def test01_basic_partial(self):
         # test singleton
         
-        lp = LPSolve()
+        lp = LP()
         
         lp.addConstraint( (ar([0]), ar([1])) , ">", 1)
         lp.setObjective( [1], mode = "minimize")
@@ -47,7 +47,7 @@ class TestBasic(unittest.TestCase):
     def test01_basic_secondcol(self):
         # test singleton
         
-        lp = LPSolve()
+        lp = LP()
 
         lp.addConstraint( ([1], [1]), ">", 1)
         lp.setObjective( ([1], [1]), mode = "minimize")
@@ -62,7 +62,7 @@ class TestBasic(unittest.TestCase):
         self.assert_(v[1] == 1)
 
     def test02_basic_minimize(self):
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.addConstraint(1, ">", 10) == 0)
 
@@ -75,7 +75,7 @@ class TestBasic(unittest.TestCase):
 
 
     def test03_basic_maximize(self):
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.addConstraint(1, "<", 20) == 0)
 
@@ -87,7 +87,7 @@ class TestBasic(unittest.TestCase):
         self.assertAlmostEqual(lp.getObjectiveValue(), 20)
 
     def test04_basic_maxmin_rerun(self):
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.addConstraint(1, ">", 10) == 0)
         self.assert_(lp.addConstraint(1, "<", 20) == 1)
@@ -109,7 +109,7 @@ class TestMinimal(unittest.TestCase):
 
     def checkMinLP1(self, opts):
         
-        lp = LPSolve()
+        lp = LP()
 
         indices = {}
         indices["t"] = (0,3)
@@ -354,7 +354,7 @@ class TestTwoLevel(unittest.TestCase):
 
     def checkMinLP1(self, opts):
         
-        lp = LPSolve()
+        lp = LP()
 
         idxlist = [{}, {}]
 
@@ -694,7 +694,7 @@ class TestTwoLevel(unittest.TestCase):
         targets_u["r"] = ar([10,10,10,10,10,10],dtype=uint)[::2]
         targets_u["f"] = ar([10,10,10],dtype=float64)
 
-        lp = LPSolve()
+        lp = LP()
 
         if opts[0] == "N":
             lp.getVariables(indices["N"], 3)

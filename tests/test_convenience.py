@@ -1,6 +1,6 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
-from pylpsolve import LPSolve, LPSolveException
+from pylpsolve import LP, LPException
 from numpy import array as ar, ones, eye, float64, uint
 
 
@@ -27,7 +27,7 @@ class TestConvenience(unittest.TestCase):
         idxlist[1]["r"] = ar([3,3,4,4,5,5])[::2]
         idxlist[1]["f"] = ar([3,4,5],dtype=float64)
 
-        lp = LPSolve()
+        lp = LP()
 
         if opts[0] == "N":
             self.assert_(lp.getVariables(idxlist[0]["N"], 3) == (0,3) )
@@ -291,7 +291,7 @@ class TestConvenience(unittest.TestCase):
         idxlist[1]["r"] = ar([3,3,4,4,5,5])[::2]
         idxlist[1]["f"] = ar([3,4,5],dtype=float64)
 
-        lp = LPSolve()
+        lp = LP()
 
         if opts[0] == "N":
             self.assert_(lp.getVariables(idxlist[0]["N"], 3) == (0,3) )

@@ -1,13 +1,13 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
-from pylpsolve import LPSolve, LPSolveException
+from pylpsolve import LP, LPException
 from numpy import ndarray as ar, ones, eye
 
 class TestOptions(unittest.TestCase):
     
     def testOptionRetrieval01(self):
 
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.getOption("presolve_rows") == False)
 
@@ -18,7 +18,7 @@ class TestOptions(unittest.TestCase):
 
     def testOptionRetrieval02(self):
 
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.getOption("presolve_rows") == False)
 
@@ -29,7 +29,7 @@ class TestOptions(unittest.TestCase):
 
     def testOptionRetrieval03(self):
 
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.getOption("presolve_rows") == False)
 
@@ -43,7 +43,7 @@ class TestOptions(unittest.TestCase):
 
     def testOptionRetrieval_BadValues_01(self):
 
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.getOption("presolve_rows") == False)
 
@@ -55,7 +55,7 @@ class TestOptions(unittest.TestCase):
 
     def testOptionRetrieval_BadValues_02(self):
 
-        lp = LPSolve()
+        lp = LP()
 
         self.assert_(lp.getOption("presolve_rows") == False)
 

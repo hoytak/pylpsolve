@@ -1,6 +1,6 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
-from pylpsolve import LPSolve, LPSolveException
+from pylpsolve import LP, LPException
 from numpy import array as ar, ones, eye, float64, uint
 
 class TestBases(unittest.TestCase):
@@ -9,7 +9,7 @@ class TestBases(unittest.TestCase):
         
         # this should work as it's in the examples
 
-        lp = LPSolve()
+        lp = LP()
 
         lp.addConstraint( (0, 1), "<", 3)
         lp.addConstraint( (1, 1), "<", 3)
@@ -26,7 +26,7 @@ class TestBases(unittest.TestCase):
 
         def getLP():
 
-            lp = LPSolve()
+            lp = LP()
 
             for c, t, b in constraint_arg_list:
                 lp.addConstraint(c,t,b)

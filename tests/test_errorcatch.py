@@ -1,31 +1,31 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
-from pylpsolve import LPSolve, LPSolveException
+from pylpsolve import LP, LPException
 from numpy import array as ar, ones, eye, float64, uint, int, ones
 
 class TestErrorCatch(unittest.TestCase):
     # test constraint adding by (wrong typed index array, value array)
     def test01_constraint_rejects_float_idx(self):
-        lp = LPSolve()
+        lp = LP()
 
         self.assertRaises(ValueError,
                           lambda: lp.addConstraint( (ar([0, 1.1, 2],dtype=float64), ar([1,1,1],dtype=float64) ), ">=", 1))
 
     # test constraint adding by (wrong typed index array, value array)
     def test01_objfunc_rejects_float_idx(self):
-        lp = LPSolve()
+        lp = LP()
 
         self.assertRaises(ValueError,
                           lambda: lp.setObjective( (ar([0, 1.1, 2],dtype=float64), ar([1,1,1],dtype=float64) )))
 
     def test02_constraint_rejects_neg_idx(self):
-        lp = LPSolve()
+        lp = LP()
 
         self.assertRaises(ValueError,
                           lambda: lp.addConstraint( (ar([0, -1, 2]), ar([1,1,1],dtype=float64) ), ">=", 1))
 
     def test02_objfunc_rejects_negative_idx(self):
-        lp = LPSolve()
+        lp = LP()
 
         self.assertRaises(ValueError,
                           lambda: lp.setObjective( (ar([0, -1, 2]), ar([1,1,1],dtype=float64) )))
@@ -33,7 +33,7 @@ class TestErrorCatch(unittest.TestCase):
     
     def checkBadSizingTooLarge(self, opts):
         
-        lp = LPSolve()
+        lp = LP()
 
         def run_test(c_arg, o_arg):
             if opts[-1] == "c":
@@ -261,7 +261,7 @@ class TestErrorCatch(unittest.TestCase):
 
     def checkBadSizingTooSmall(self, opts):
         
-        lp = LPSolve()
+        lp = LP()
 
         def run_test(c_arg, o_arg):
             if opts[-1] == "c":
@@ -501,7 +501,7 @@ class TestErrorCatch(unittest.TestCase):
         targets["a"] = ar([1,1,1],dtype=uint)
         targets["f"] = ar([1,1,1],dtype=float64)
 
-        lp = LPSolve()
+        lp = LP()
 
         if opts[0] == "N":
             lp.getVariables(indices["N"], 3)

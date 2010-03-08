@@ -1,6 +1,6 @@
 import random, unittest, cPickle, collections
 from copy import deepcopy, copy
-from pylpsolve import LPSolve, LPSolveException
+from pylpsolve import LP, LPException
 from numpy import array, ones, eye, float64, uint, zeros
 
 from pylpsolve.graphs import graphCut, maximizeGraphPotential
