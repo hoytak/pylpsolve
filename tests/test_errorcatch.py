@@ -74,7 +74,7 @@ class TestErrorCatch(unittest.TestCase):
         if opts[0] == "d" or opts[0] == "T":
 
             if opts[1] == "2":
-                lp.getVariables("b", 1)
+                lp.getIndexBlock("b", 1)
                 cd = [ ("a", wl[:2]), ("b", wl[2:])]
                 od = [ ("a", ol[:2]), ("b", ol[2:])]
             
@@ -93,7 +93,7 @@ class TestErrorCatch(unittest.TestCase):
             elif opts[1] in indices.keys() and opts[2] in weights.keys():
 
                 if "N" in opts:
-                    lp.getVariables(indices["N"], 3)
+                    lp.getIndexBlock(indices["N"], 3)
 
                 cd = [(indices[opts[1]], weights[opts[2]])]
                 od = [(indices[opts[1]], obj_func[opts[2]])]
@@ -113,7 +113,7 @@ class TestErrorCatch(unittest.TestCase):
             
             # No little n option here
             if "N" in opts:
-                lp.getVariables(indices["N"], 3)
+                lp.getIndexBlock(indices["N"], 3)
             
             run_test( (indices[opts[0]], weights[opts[1]]),
                       (indices[opts[0]], obj_func[opts[1]]))
@@ -302,7 +302,7 @@ class TestErrorCatch(unittest.TestCase):
         if opts[0] == "d" or opts[0] == "T":
 
             if opts[1] == "2":
-                lp.getVariables("b", 3)
+                lp.getIndexBlock("b", 3)
                 cd = [ ("a", wl[:2]), ("b", wl[2:])]
                 od = [ ("a", ol[:2]), ("b", ol[2:])]
 
@@ -317,7 +317,7 @@ class TestErrorCatch(unittest.TestCase):
             elif opts[1] in indices.keys() and opts[2] in weights.keys():
 
                 if "N" in opts:
-                    lp.getVariables(indices["N"], 5)
+                    lp.getIndexBlock(indices["N"], 5)
 
                 cd = [(indices[opts[1]], weights[opts[2]])]
                 od = [(indices[opts[1]], obj_func[opts[2]])]
@@ -337,7 +337,7 @@ class TestErrorCatch(unittest.TestCase):
             
             # No little n option here
             if "N" in opts:
-                lp.getVariables(indices["N"], 5)
+                lp.getIndexBlock(indices["N"], 5)
             
             run_test( (indices[opts[0]], weights[opts[1]]),
                       (indices[opts[0]], obj_func[opts[1]]))
@@ -504,7 +504,7 @@ class TestErrorCatch(unittest.TestCase):
         lp = LP()
 
         if opts[0] == "N":
-            lp.getVariables(indices["N"], 3)
+            lp.getIndexBlock(indices["N"], 3)
 
         io = indices[opts[0]]
         vl = values [opts[1]]

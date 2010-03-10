@@ -30,7 +30,7 @@ class TestConvenience(unittest.TestCase):
         lp = LP()
 
         if opts[0] == "N":
-            self.assert_(lp.getVariables(idxlist[0]["N"], 3) == (0,3) )
+            self.assert_(lp.getIndexBlock(idxlist[0]["N"], 3) == (0,3) )
 
         # Now bind the second group
         if opts[2] == "g":
@@ -294,7 +294,7 @@ class TestConvenience(unittest.TestCase):
         lp = LP()
 
         if opts[0] == "N":
-            self.assert_(lp.getVariables(idxlist[0]["N"], 3) == (0,3) )
+            self.assert_(lp.getIndexBlock(idxlist[0]["N"], 3) == (0,3) )
 
         # Now bind the second group
             

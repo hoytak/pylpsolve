@@ -234,11 +234,11 @@ cdef graphCutSparse(ar origin_indices, ar dest_indices, ar capacity,
     
     lp = LP()
 
-    vblock = lp.getVariables("p", nV)
+    vblock = lp.getIndexBlock("p", nV)
 
     assert vblock == (0, nV)
 
-    xblock = lp.getVariables("x", nE)
+    xblock = lp.getIndexBlock("x", nE)
 
     assert xblock == (nV, nV + nE)
 

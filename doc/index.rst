@@ -42,14 +42,13 @@ PyLPSolve Distinctives
 Short Example
 ------------------------------
 
-Consider the following simple linear program::
+Consider the following simple linear program:
 
   .. math::
-    \begin{array}{l} 
-    \operatorname{maximize} x + y + z \\
-    \text{subject to} \\
-    \quad x + y \leq 3 \\ 
-    \quad y + 2z \leq 4 
+    \begin{array}{lr} 
+    \operatorname{maximize } & x + y + z \\
+    \text{subject to} & x + y \leq 3 \\ 
+    \quad & y + 2z \leq 4 
     \end{array}
     
 This can be specified by the following code::
@@ -93,14 +92,17 @@ above::
 
 Numerous other ways of working with constraints and named blocks of
 variables are possible.  For more examples and information, see the
-`API`_.
+`api`_.
+
 
 Contents
 ========================================
 
 .. toctree::
-    :maxdepth: 2
+    :maxdepth: 3
     
     api
     download
     license
+
+.. include:: references.rst 

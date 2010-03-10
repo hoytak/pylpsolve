@@ -26,7 +26,7 @@ user to specifiy blocks of variables by string tags, or other index
 block methods, then work with these blocks instead of individual
 indices.  All the elements of the LP are cached until solve is called,
 with memory management and proper sizing of the LP in lpsolve handled
-automatically.  
+automatically.
 
 PyLPSolve is written in cython, with all low-level processing done
 effectively in low-level C for speed.  Thus there should be mimimal
@@ -51,11 +51,11 @@ classifiers = [
 
 numpy_needed = True
 
-source_directory_list = ['src']
+source_directory_list = ['pylpsolve']
 
 # Stuff for extension module stuff
-compiler_args = ['-fpic', '-O3']
-link_args = ['-fpic', '-O3']
+compiler_args = ['-O3']
+link_args = ['-O3']
 
 extra_library_dirs = []
 extra_include_dirs = []

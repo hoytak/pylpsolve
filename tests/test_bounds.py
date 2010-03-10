@@ -23,7 +23,7 @@ class TestBounds(unittest.TestCase):
         lp = LP()
 
         if opts[0] == "N":
-            lp.getVariables(indices["N"], 3)
+            lp.getIndexBlock(indices["N"], 3)
 
         lp.setObjective([1,1,1,1,1,1])
 
@@ -100,7 +100,7 @@ class TestBounds(unittest.TestCase):
         lp = LP()
 
         if opts[0] == "N":
-            lp.getVariables(indices["N"], 3)
+            lp.getIndexBlock(indices["N"], 3)
 
         lp.setObjective([1,1,1,1,1,1])
         lp.addConstraint( ((3,6), [[1,0,0],[0,1,0],[0,0,1]]), "<=", 10)
@@ -190,7 +190,7 @@ class TestBounds(unittest.TestCase):
         lp.setLowerBound(lbindices, lbvalues[opts[1]])
 
         if opts[0] == "N":
-            lp.getVariables(ubindices["N"], 3)
+            lp.getIndexBlock(ubindices["N"], 3)
 
         lp.setUpperBound(ubindices[opts[0]], ubvalues[opts[1]])
 

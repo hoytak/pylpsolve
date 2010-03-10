@@ -180,7 +180,7 @@ class TestMinimal(unittest.TestCase):
             elif opts[0] == "T":
 
                 if opts[1] == "N":
-                    lp.getVariables(indices["N"], 3)
+                    lp.getIndexBlock(indices["N"], 3)
 
                 self.assert_(lp.addConstraint(cd, ">=", 1) == 0)
                 lp.setObjective(od)
@@ -188,7 +188,7 @@ class TestMinimal(unittest.TestCase):
             assert len(opts) == 2
             
             if opts[0] == "N":
-                lp.getVariables(indices["N"], 3)
+                lp.getIndexBlock(indices["N"], 3)
 
             io = indices[opts[0]]
 
@@ -462,7 +462,7 @@ class TestTwoLevel(unittest.TestCase):
                 elif opts[0] == "T":
 
                     if opts[1] == "N":
-                        lp.getVariables(indices["N"], 3)
+                        lp.getIndexBlock(indices["N"], 3)
 
                     self.assert_(lp.addConstraint(cd, ">=", 1) == ci)
                     lp.addToObjective(od)
@@ -470,7 +470,7 @@ class TestTwoLevel(unittest.TestCase):
                 assert len(opts) == 2
 
                 if opts[0] == "N":
-                    lp.getVariables(indices["N"], 3)
+                    lp.getIndexBlock(indices["N"], 3)
 
                 io = indices[opts[0]]
 
@@ -697,7 +697,7 @@ class TestTwoLevel(unittest.TestCase):
         lp = LP()
 
         if opts[0] == "N":
-            lp.getVariables(indices["N"], 3)
+            lp.getIndexBlock(indices["N"], 3)
 
         io = indices[opts[0]]
         vl = values [opts[1]]

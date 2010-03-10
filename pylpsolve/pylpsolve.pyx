@@ -426,21 +426,20 @@ cdef class LP(object):
         either be passed in pairs as arguments or as keyword
         arguments.  Thus the following is valid::
 
-          lp.setOption("pricer", "devex", presolve_rows = True)
+          lp.setOption(``"pricer"``, ``"devex"``, presolve_rows = True)
 
-        This sets the pricer option to "devex" and presolve_rows to
+        This sets the pricer option to ``"devex"`` and presolve_rows to
         True.
 
 
-        Presolve options
-        ==================================================
+        **Presolve options**
         
         Presolve is off by default, as it prevents specifiying a basis
         or initial guess or modifying the constraint matrix
         afterwards.  To turn it on, set any of the options below to
         True.
 
-        Available presolve options are::
+        Available presolve options are:
 
           presolve_rows:
             Presolve rows.
@@ -529,30 +528,29 @@ cdef class LP(object):
         previously with setOption) by passing ``presolve_x = True``.
 
 
-        Pricing and Pivoting Options
-        ==================================================
+        **Pricing and Pivoting Options**
         
-        The main pricing options can take the following values::
+        The main pricing options can take the following values:
 
-          "firstindex":
+          ``"firstindex"``:
             Select first available pivot.
 
-          "dantzig": 
+          ``"dantzig"``: 
             Select according to Dantzig.
 
-          "devex":
+          ``"devex"``:
              Devex pricing from Paula Harris.
              
-          "steepestedge":
+          ``"steepestedge"``:
              Steepest Edge.
 
         
-        Additional pricer options, which may be set using True::
+        Additional pricer options, which may be set using True:
     
           price_primalfallback: 
             In case of Steepest Edge, fall back to DEVEX in primal.
 
-          price_multiple:	
+          price_multiple:       
             Preliminary implementation of the multiple pricing
             scheme. This means that attractive candidate entering
             columns from one iteration may be used in the subsequent
@@ -560,36 +558,36 @@ cdef class LP(object):
             the current implementation, lp_solve only reuses the 2nd
             best entering column alternative.
 
-          price_partial:	
+          price_partial:        
             Enable partial pricing.
 
-          price_adaptive:	
+          price_adaptive:       
             Temporarily use alternative strategy if cycling is detected.
 
-          price_randomize:	
+          price_randomize:      
             Adds a small randomization effect to the selected pricer.
 
-          price_autopartial:	
+          price_autopartial:    
             Indicates automatic detection of segmented/staged/blocked
             models. It refers to partial pricing rather than full
             pricing. With full pricing, all non-basic columns are
             scanned, but with partial pricing only a subset is scanned
             for every iteration. This can speed up several models.
 
-          price_loopleft:	
+          price_loopleft:       
             Scan entering/leaving columns left rather than right.
 
-          price_loopalternate:	
+          price_loopalternate:  
             Scan entering/leaving columns alternatingly left/right.
 
-          price_harristwopass:	
+          price_harristwopass:  
             Use Harris' primal pivot logic rather than the default.
 
-          price_truenorminit:	
+          price_truenorminit:   
             Use true norms for Devex and Steepest Edge initializations.
 
-        Scaling Options
-        ========================================
+
+        **Scaling Options**
 
         There's a primary scaling mode plus additional flags may be
         set.  The scaling mode can influence numerical stability
@@ -599,22 +597,22 @@ cdef class LP(object):
         The available scale modes are set using the ``scale_mode``
         option, which can take the following values:
 
-          "none":
+          ``"none"``:
             No scaling used.
 
-          "extreme":
+          ``"extreme"``:
             Scale to convergence using largest absolute value.
 
-          "range":
+          ``"range"``:
             Scale based on the simple numerical range.
 
-          "mean":
+          ``"mean"``:
             Numerical range-based scaling.
 
-          "geometric":
+          ``"geometric"``:
             Geometric scaling (default).
 
-          "curtisreid":
+          ``"curtisreid"``:
             Curtis-reid scaling.
 
 
@@ -622,7 +620,7 @@ cdef class LP(object):
         (e.g. ``scale_integers = True``):
 
           scale_logarithmic:
-	    Scale to convergence using logarithmic mean of all values.
+            Scale to convergence using logarithmic mean of all values.
 
           scale_userweight:
             User can specify scalars (not implemented).
@@ -664,8 +662,7 @@ cdef class LP(object):
           scale_colsonly:
             Scale only columns.
 
-        Other miscilaneous options::
-        ========================================
+        **Other miscilaneous options**:
 
           verbosity:
             Sets the verbosity level of printed information.  Default
@@ -698,30 +695,44 @@ cdef class LP(object):
     ############################################################
     # Methods relating to variable indices
 
-    def getVariables(self, a1, a2 = None):
-        """
-        Returns a new or current block of variable indices to be used
-        in the current LP.  The return value is a 2-tuple,
-        ``(low_index, high_index)``.  This block of indices may be
-        used as the index block argument to any function accepting an
-        index block as an argument.  Note that such index blocks can
-        be created implicitly.
+    def getIndexBlock(self, a1, a2 = None):
+        r"""
+        Index blocks are used in many methods to refer to single
+        variables or groups of variables as a unit.  These index
+        blocks can be specified by name or by a ``(low_index,
+        top_index)`` tuple (the top index is not included,
+        i.e. :math:`\{\ell, \ell+1, ..., h -1 \}`).  Any function
+        accepting an index block argument can work with a name, a
+        2-tuple of this form, or an array/list of indices (which does
+        not have to specify correspond with existing blocks).  A name
+        will always refer to the same block of variables.
+
+        `getIndexBlock` is a method to explicitly instanciate index
+        blocks -- index blocks can be created implicitly in functions
+        like `addConstraint` or `setUnbounded`, so calling this method
+        is often not necessary.
+
+        This method returns a new or current block of variable indices to be
+        used in the current LP.  The return value is a 2-tuple,
+        ``(low_index, top_index)``.  This block of indices, or the
+        name if given, may be used as the index block argument to any
+        function accepting an index block as an argument.
 
         It may be called in one of three ways, with `name` being a
         string and `size` being a positive integer:
 
-          getVariables(name, size):
+          getIndexBlock(name, size):
             Returns a block named `name` with `size` variables.  If
             block `name` does not currently exist, it is reserved and
             may be refered to either by name or by the returned index
             tuple.  If a block named `name` does exist, it is
             returned; a ValueError is raised if the sizes don't match.
 
-          getVariables(name): 
+          getIndexBlock(name): 
             Returns an index block named `name`.  If it does not
             already exist, a value error is raised.
 
-          getVariables(size):
+          getIndexBlock(size):
             Returns a new, unnamed index block of `size` variables.
         """
         
@@ -750,7 +761,7 @@ cdef class LP(object):
                 name = a1
                 size = a2
             else:
-                raise ValueError("getVariables() arguments must be a block name/size, size, or name of prexisting block.")
+                raise ValueError("getIndexBlock() arguments must be a block name/size, size, or name of prexisting block.")
 
             B = self._getVariableIndexBlock(size, name)
             
@@ -998,9 +1009,10 @@ cdef class LP(object):
     # Methods dealing with constraints
 
     cpdef addConstraint(self, coefficients, str ctypestr, rhs):
-        """        
+        r"""        
         Adds a constraint or set of constraints to the lp, returning
-        the indices of the corresponding rows.
+        the indices of the corresponding rows as a list (possibly with
+        one element).
 
         The non-zero coefficients in the constraint are given by the
         `coefficients` argument, which can take several different
@@ -1020,10 +1032,10 @@ cdef class LP(object):
         implicitly created with three variables; if it does exist then
         an exception is raised if three variables are not supplied.)
         If the variables in the "b1" block are `x`, `y`, and `z`, the
-        constraints would look like::
+        constraints would look like:
 
            .. math:: 
-              \begin{array}{l} 
+              \begin{array}{r} 
               x + y \leq 3 \\ 
               y + z \leq 4 
               \end{array}
@@ -1031,8 +1043,8 @@ cdef class LP(object):
         More detailed examples are given after specifying the
         intuition behind these constraint settings.
 
-        Specifying Coefficients
-        ========================================
+
+        **Specifying Coefficients**
 
         Coefficients can be 1d arrays, 2d arrays, or single scalars.
         1d arrays can be given either as python lists or as numpy
@@ -1044,8 +1056,8 @@ cdef class LP(object):
         mismatch between expected number of variables and what is
         given, an exception is raised.
 
-        Specifying Variables
-        ========================================
+
+        **Specifying Variables**
 
         Which variables that given coefficients correspond to is
         specified by a corresponding index block.
@@ -1067,14 +1079,12 @@ cdef class LP(object):
         
            lp.addConstraint([("a", [1,2]), ("b", [-1,-2,0])], "<=", 5)
 
-        would specify the constraint::
+        would specify the constraint :math:`x_0 + 2x_1 - x_2 -2x_3 \leq 5`.
 
-           .. math:: x_0 + 2x_1 - x_2 -2x_3 \leq 5
 
-        Constraint Type
-        ========================================
+        **Constraint Type**
         
-        There are four possible types of constraint supported, equal,
+        There are four possible types of constraint supported: equal,
         less-than-or-equal, greater-than-or-equal, or within an
         interval (range constraints).  The `ctypestr` argument is a
         string specifying one of these constraints.  Possible values
@@ -1091,9 +1101,9 @@ cdef class LP(object):
 
           Within an interval: 
             ``"in", "between", "range"``
+
           
-        Right Hand Side 
-        ========================================
+        **Right Hand Side** 
 
         The required type of the `rhs` argument is determined by the
         specified coefficients and the constraint type:
@@ -1112,9 +1122,13 @@ cdef class LP(object):
             lp.addConstraint([1,2,3], ">=", 0)
             lp.addConstraint([1,2,3], "<=", 2)
 
-          Both specify::
+          Both specify:
 
-            .. math:: \begin{array}{l} x_0 + 2x_1 + 3x_2 \geq 0 \\ x_0 + 2x_1 + 3x_2 \leq 2 \end{array}
+            .. math::
+              \begin{array}{r}
+              x_0 + 2x_1 + 3x_2 \geq 0 \\
+              x_0 + 2x_1 + 3x_2 \leq 2
+              \end{array}
 
         For 2d Coefficients:
 
@@ -1140,27 +1154,29 @@ cdef class LP(object):
 
           both specify the constraints:
 
-            .. math:: \begin{array}{l} x_0 + x_1 \leq 5 \\ x_1 + 2x_2 \leq 5 \end{array}
+            .. math::
+              \begin{array}{r}
+              x_0 + x_1  \leq 5 \\
+              x_1 + 2x_2 \leq 5
+              \end{array}
        
-          And::
+          And each of the following::
 
             lp.addConstraint( [[1,1,0],[0,1,2]], "in", [1, 5]) 
-
             lp.addConstraint( [[1,1,0],[0,1,2]], "in", [[1,1], [5,5]]) 
-
             lp.addConstraint( [[1,1,0],[0,1,2]], "in", [1, [5,5]]) 
 
-          all specify the constraints::
+          specifies the constraints:
 
-            .. math:: \begin{array}{l} 
+            .. math:: \begin{array}{r} 
                          x_0 + x_1  \leq 5 \\ 
                          x_0 + x_1  \geq 1 \\ 
                          x_1 + 2x_2 \geq 1 \\ 
                          x_1 + 2x_2 \leq 5 
                       \end{array}
 
-        Examples
-        ========================================
+
+        **Examples**
 
         We present several detailed examples.
 
@@ -1310,9 +1326,9 @@ cdef class LP(object):
 
     def bindEach(self, indices_1, str ctypestr, indices_2):
         """
-        Constrains *each* variable in `indices_1` by the corresponding
-        variable in `indices_2` using the `ctypestr` relationship.
-        For example::
+        A convenience method that constrains *each* variable in
+        `indices_1` by the corresponding variable in `indices_2` using
+        the `ctypestr` relationship.  For example::
 
           lp.bindEach("x", "<=", "y")
 
@@ -1380,9 +1396,11 @@ cdef class LP(object):
 
     def bindSandwich(self, constrained_indices, sandwich_indices):
         """
-        Constrains the absolute value of each variable in
-        `constrained_indices` to be less than or equal to the
-        corresponding variable in `sandwich_indices`
+        A convenience function that constrains the absolute value of
+        each variable in `constrained_indices` to be less than or
+        equal to the corresponding variable in `sandwich_indices`.
+        The variables in `constrained_indices` are set to be
+        unbounded.
 
         `constrained_indices` and `sandwich_indices` must specify the
         same number of indices, and can be any valid specification for
@@ -1436,6 +1454,9 @@ cdef class LP(object):
 
             ret_row_idx[2*i] = self._addConstraint(idx, row_1, constraint_leq, 0)
             ret_row_idx[2*i+1] = self._addConstraint(idx, row_2, constraint_leq, 0)
+
+        # set the sandwiched variables to be unbounded
+        self.setUnbounded(constrained_indices)
 
         return ret_row_idx
 
@@ -1492,11 +1513,14 @@ cdef class LP(object):
         
     cpdef clearObjective(self):
         """
-        Resets the current objective function.  
+        Resets the current objective function, clearing all
+        coefficients and resetting the objective mode to the default
+        (minimize).
         """
         
         self._resetObjective()
-        self._obj_func_specified = True
+        self.setMinimize(True)
+        self._obj_func_specified = False
 
     def setObjective(self, coefficients, mode = None):
         """
@@ -1511,7 +1535,7 @@ cdef class LP(object):
         self._setMode(mode)
 
 
-    def addToObjective(self, coefficients, mode = None):
+    def addToObjective(self, coefficients):
         """
         Just like `setObjective()`, but does not clear the objective
         function first.  Thus this function can be called repeatedly
@@ -1613,7 +1637,8 @@ cdef class LP(object):
         """
         If `minimize` is True (default), sets the run mode to minimize
         the objective function.  If `minimize` is false, the run mode
-        is set to maximize the objective function.
+        is set to maximize the objective function.  Note that this may
+        also be specified through the `mode` parameter of setObjective.
         """
 
         self._maximize_mode = not minimize
@@ -2176,17 +2201,17 @@ cdef class LP(object):
 
     def solve(self, **options):
         """
-        Solves the given model.  
+        Solves the current model.  If an error occurs, an LPException
+        is raised.
 
-        Configuration
-        ========================================
+        **Configuration**
         
         Any of the options available to `setOption()` may also be
         passed in as keyword arguments.  These affect only the current
         run (as opposed to `setOption()`, which affects all subsequent
         runs of `solve()`).
 
-        Additional keyword options, unique to `solve()`, are::
+        Additional keyword options, unique to `solve()`, are:
 
           basis:
             Initialize the LP with the given basis.  This must be an
@@ -2211,6 +2236,7 @@ cdef class LP(object):
             specified and True, an exception is raised if the guess
             fails.  The default is False, which causes a warning to be
             generated.
+
         """
 
         ########################################
@@ -2248,7 +2274,7 @@ cdef class LP(object):
         if ret == 0:
             return
         elif ret == -2:
-            # NOMEMORY (-2)  	Out of memory
+            # NOMEMORY (-2)     Out of memory
             raise MemoryError("LP Solver out of memory.")
         elif ret == 1:
             # SUBOPTIMAL (1) The model is sub-optimal. Only happens if
@@ -2266,22 +2292,22 @@ cdef class LP(object):
 
             warnings.warn("Solver solution suboptimal")
         elif ret == 2:
-            # INFEASIBLE (2) 	The model is infeasible
+            # INFEASIBLE (2)    The model is infeasible
             raise LPException("Error 2: Model infeasible")
         elif ret == 3:
-            # UNBOUNDED (3) 	The model is unbounded
+            # UNBOUNDED (3)     The model is unbounded
             raise LPException("Error 3: Model unbounded")
         elif ret == 4:
-            # DEGENERATE (4) 	The model is degenerative
+            # DEGENERATE (4)    The model is degenerative
             raise LPException("Error 4: Model degenerate")
         elif ret == 5:
-            # NUMFAILURE (5) 	Numerical failure encountered
+            # NUMFAILURE (5)    Numerical failure encountered
             raise LPException("Error 5: Numerical failure encountered")
         elif ret == 6:
-            # USERABORT (6) 	The abort routine returned TRUE. See put_abortfunc
+            # USERABORT (6)     The abort routine returned TRUE. See put_abortfunc
             raise LPException("Error 6: Solver aborted")
         elif ret == 7:
-            # TIMEOUT (7) 	A timeout occurred. Indicates timeout was set via set_timeout
+            # TIMEOUT (7)       A timeout occurred. Indicates timeout was set via set_timeout
             raise LPException("Error 7: Timeout Occurred.")
         elif ret == 9:
             # PRESOLVED (9) The model could be solved by
@@ -2289,7 +2315,7 @@ cdef class LP(object):
             # set_presolve
             return
         elif ret == 10:
-            # PROCFAIL (10) 	The B&B routine failed
+            # PROCFAIL (10)     The B&B routine failed
             raise LPException("Error 10: The B&B routine failed")
         elif ret == 11:
             # PROCBREAK (11) The B&B was stopped because of a
@@ -2297,17 +2323,17 @@ cdef class LP(object):
             # break-at-value (see set_break_at_value)
             raise LPException("Error 11: B&B Stopped.")
         elif ret == 12:
-            # FEASFOUND (12) 	A feasible B&B solution was found
+            # FEASFOUND (12)    A feasible B&B solution was found
             return 
         elif ret == 13:
-             # NOFEASFOUND (13) 	No feasible B&B solution found
+             # NOFEASFOUND (13)         No feasible B&B solution found
             raise LPException("Error 13: No feasible B&B solution found")
 
         # And we're done
 
     def getSolution(self, indices = None):
         """
-        Returns the final values of the variables in the constraints.
+        Returns the final values of the variables in the solved model.
 
         The following are valid values of `indices`:
 
@@ -2451,10 +2477,11 @@ cdef class LP(object):
 
     def getBasis(self, bint include_dual_basis = True):
         """
-        Returns the basis from the previous run.  If
-        `include_dual_basis` is True, then the basis for both the
-        primal and the dual solutions are specified, otherwise only
-        the primal is returned.
+        Returns the basis from a previously solved model.  If
+        `include_dual_basis` is True (default), then the basis for
+        both the primal and the dual solutions is given, otherwise
+        only the primal is returned.  This can speed up the model
+        substantially.
         """
 
         if self.lp == NULL:

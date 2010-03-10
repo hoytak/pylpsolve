@@ -20,7 +20,7 @@ class TestBases(unittest.TestCase):
 
         lp.solve(guess = [3,3])
 
-        self.assert_(lp.getInfo("Iterations") == 0)
+        self.assert_(lp.getInfo("Iterations") == 0, lp.getInfo("Iterations"))
 
     def checkBasisRecycling(self, opts, constraint_arg_list, objective):
 
@@ -34,7 +34,6 @@ class TestBases(unittest.TestCase):
             lp.setObjective(objective)
 
             return lp
-
     
         lp1 = getLP()
 
