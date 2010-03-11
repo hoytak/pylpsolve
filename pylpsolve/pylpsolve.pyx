@@ -1056,6 +1056,10 @@ cdef class LP(object):
         mismatch between expected number of variables and what is
         given, an exception is raised.
 
+        For 2d arrays, the first dimension is the row, and the second
+        is the column.  In other words, each inner vector specifies
+        one coefficient.
+
 
         **Specifying Variables**
 
@@ -1136,7 +1140,8 @@ cdef class LP(object):
           relationship, then `rhs` can be either a scalar or a 1d
           array/list.  If it is a scalar, than all the constraints
           share the same bound.  If it is a 1d array or list, then it
-          elements correspond to the constraints on the specified rows.  
+          elements correspond to the constraints on the specified
+          rows.
 
           If it is a range constraint, then `rhs` must be a 2 element
           list, with the two elements giving the lower and upper
@@ -1178,7 +1183,17 @@ cdef class LP(object):
 
         **Examples**
 
-        We present several detailed examples.
+        *Specifying specific indices with a 1d Array and range constraints*::
+        
+          lp.addConstraint( ([0, 3, 10], [1, 5, 10]), "in", [-1,1])
+
+        *Specifying specific indices with a 2d Array*::
+        
+          lp.addConstraint( ([0, 1, 2], [[1, 0, 1], [0,  0.5,  1]]), "<=", [1,2])
+
+        *Specifying a 2d constraint involving multiple blocks*::
+
+          lp.addConstraint( [ (
 
         """
 
@@ -1314,11 +1329,11 @@ cdef class LP(object):
 
     cdef _addConstraintDict(self, dict d, int ctype, rhs):
         I, V = self._getArrayPairFromDict(d)
-        return self._addConstraint(I, V, ctype, rhs)
+        return self._addConstraintArray(I, V, ctype, rhs)
             
     cdef _addConstraintTupleList(self, list l, int ctype, rhs):
         I, V = self._getArrayPairFromTupleList(l)
-        return self._addConstraint(I, V, ctype, rhs)
+        return self._addConstraintArray(I, V, ctype, rhs)
 
 
     ############################################################
@@ -1598,7 +1613,7 @@ cdef class LP(object):
         
         # debug note: at this point val is ndarray
         self._stackOnInterpretedKeyValuePair(
-            self._obj_func_keys, self._obj_func_values, idx, val, &self._obj_func_n_vals_count)
+            self._obj_func_keys, self._obj_func_values, idx, val, &self._obj_func_n_vals_count, True)
 
         self._obj_func_specified = True
 
@@ -1617,7 +1632,7 @@ cdef class LP(object):
             
         if self._obj_func_specified:
 
-            I, V = self._getArrayPairFromKeyValuePair(
+            I, V = self._getIndexValueArraysFromIntepretedStack(
                 self._obj_func_keys, 
                 self._obj_func_values, 
                 self._obj_func_n_vals_count)
@@ -1718,10 +1733,10 @@ cdef class LP(object):
 
         if lower_bound:
             self._stackOnInterpretedKeyValuePair(
-                self._lower_bound_keys, self._lower_bound_values, varidx, b, &self._lower_bound_count)
+                self._lower_bound_keys, self._lower_bound_values, varidx, b, &self._lower_bound_count, True)
         else:
             self._stackOnInterpretedKeyValuePair(
-                self._upper_bound_keys, self._upper_bound_values, varidx, b, &self._upper_bound_count)
+                self._upper_bound_keys, self._upper_bound_values, varidx, b, &self._upper_bound_count, True)
             
 
     cdef applyVariableBounds(self):
@@ -1732,7 +1747,7 @@ cdef class LP(object):
         cdef ar[double, mode="c"] V
                
         # First the lower bounds; thus we can use set_unbounded on them
-        I, V = self._getArrayPairFromKeyValuePair(
+        I, V = self._getIndexValueArraysFromIntepretedStack(
             self._lower_bound_keys, self._lower_bound_values, self._lower_bound_count)
 
         for 0 <= i < I.shape[0]:
@@ -1744,7 +1759,7 @@ cdef class LP(object):
         # Now set the upper bounds; this is trickier as set_unbounded
         # undoes the lower bound
 
-        I, V = self._getArrayPairFromKeyValuePair(
+        I, V = self._getIndexValueArraysFromIntepretedStack(
             self._upper_bound_keys, self._upper_bound_values, self._upper_bound_count)
 
         cdef double lp_infty = get_infinite(self.lp)
@@ -1819,14 +1834,9 @@ cdef class LP(object):
         cdef size_t idx_count = 0
 
         for k, v in d.iteritems():
-            self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count)
+            self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count, False)
 
-        cdef ar I = empty(idx_count, npint)
-        cdef ar V = empty(idx_count, npfloat)
-
-        self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
-
-        return (I, V)
+        return self._getIndexValueArraysFromIntepretedStack(key_buf, val_buf, idx_count)
 
     cdef tuple _getArrayPairFromTupleList(self, list l):
         # Builds an array pair from a tuple
@@ -1835,34 +1845,22 @@ cdef class LP(object):
         cdef size_t idx_count = 0
 
         for k, v in l:
-            self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count)
+            self._stackOnInterpretedKeyValuePair(key_buf, val_buf, k, v, &idx_count, False)
 
-        cdef ar I = empty(idx_count, npint)
-        cdef ar V = empty(idx_count, npfloat)
-
-        self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
-
-        return (I, V)
-
-    cdef tuple _getArrayPairFromKeyValuePair(self, list key_buf, list val_buf, size_t idx_count):
-        cdef ar I = empty(idx_count, npint)
-        cdef ar V = empty(idx_count, npfloat)
-
-        self._fillIndexValueArraysFromIntepretedStack(I, V, key_buf, val_buf)
-        
-        return (I, V)
-    
-    cdef _stackOnInterpretedKeyValuePair(self, list key_buf, list val_buf, k, v, size_t *count):
+        return self._getIndexValueArraysFromIntepretedStack(key_buf, val_buf, idx_count)
+  
+    cdef _stackOnInterpretedKeyValuePair(self, list key_buf, list val_buf, k, v,
+                                         size_t *count, bint restrict_to_1d):
         # Appends interpreted key value pairs to the lists
 
         cdef ar tI
-        cdef ar[double] tV
+        cdef ar tV
         cdef size_t i
 
         cdef ar[size_t, ndim=2, mode="c"] B
 
         if isposint(k):
-            tV = self._resolveValues(v, True)
+            tV = self._resolveValues(v, restrict_to_1d)
             
             if tV.shape[0] != 1:
                 raise ValueError("Scalar index must specify only one value.")
@@ -1874,9 +1872,9 @@ cdef class LP(object):
         elif (type(k) is str or type(k) is tuple 
               or type(k) is list or type(k) is ndarray):
 
-            tV = self._resolveValues(v, True)
-            tI = self._resolveIdxBlock(k, tV.shape[0])
-            
+            tV = self._resolveValues(v, restrict_to_1d)
+            tI = self._resolveIdxBlock(k, tV.shape[tV.ndim-1])
+
             key_buf.append(tI)
             val_buf.append(tV)
 
@@ -1894,8 +1892,8 @@ cdef class LP(object):
                 count[0] += tI[0,1] - tI[0,0]
 
         elif k is None:
-            tV = self._resolveValues(v, True)
-            tI = self._resolveIdxBlock(None, tV.shape[0])
+            tV = self._resolveValues(v, restrict_to_1d)
+            tI = self._resolveIdxBlock(k, tV.shape[tV.ndim-1])
             
             B = empty(range_tuple_size, npuint)
             B[0,0] = 0
@@ -1912,78 +1910,167 @@ cdef class LP(object):
         assert len(key_buf) == len(val_buf), "k:%d != v:%d" % (len(key_buf), len(val_buf))
 
 
-    cdef _fillIndexValueArraysFromIntepretedStack(self, ar I_o, ar V_o, list key_buf, list val_buf):
+    cdef tuple _getIndexValueArraysFromIntepretedStack(self, list key_buf, list val_buf, size_t idx_count):
         
-        cdef ar[int, mode="c"] I = I_o
-        cdef ar[double, mode="c"] V = V_o
-
         cdef ar[int] tI
         cdef ar[double] tV
-        
+        cdef ar arV
         cdef ar[size_t, ndim=2, mode="c"] B
+        cdef ar[int, mode="c"] I = empty(idx_count, npint)
 
-        cdef size_t i, j, d
+        cdef size_t i, j, d, idx
 
         assert len(key_buf) == len(val_buf), "k:%d != v:%d" % (len(key_buf), len(val_buf))
 
-        cdef size_t ii = 0
+        # do a first pass to determine the 2nd diminsion (often 1)
 
-        for 0 <= i < len(key_buf):
-            k = key_buf[i]
-            v = val_buf[i]
+        cdef size_t n_rows = 1
 
-            if isnumeric(k):
-                I[ii] = <size_t>k
-                V[ii] = <double>v
-                ii += 1
+        for k, v in zip(key_buf, val_buf):
+            if type(k) is ndarray:
+                arV = <ar>v
 
-            elif type(k) is ndarray:
+                if arV.ndim == 2 and n_rows < arV.shape[0]:
+                    n_rows = arV.shape[0]
+
+        # now see if we're dealing with 2d here or simply 1d, and do
+        # the faster thing
+
+        cdef ar[double, ndim=2, mode="c"] V2d
+        cdef ar[double, mode="c"] V1d
+        cdef size_t ii = 0, col_start = 0, col_end = 0
+
+        if n_rows == 1:
+
+            V1d = empty( idx_count, npfloat)
+
+            for k, v in zip(key_buf, val_buf):
                 
-                d = (<ar>k).ndim
-                
-                if d == 1:
+                if isnumeric(k):
+                    I[ii] = <size_t>k
+                    V1d[ii] = <double>v
+                    ii += 1
 
-                    tI = <ar>k
-                    tV = <ar>v
+                elif type(k) is ndarray:
 
-                    if tI.shape[0] != 1 and tV.shape[0] == 1:
-                        for 0 <= j < tI.shape[0]:
-                            I[ii] = tI[j]
-                            V[ii] = tV[0]
-                            ii += 1
+                    d = (<ar>k).ndim
 
-                    elif tI.shape[0] == tV.shape[0]:
-                        for 0 <= j < tI.shape[0]:
-                            I[ii] = tI[j]
-                            V[ii] = tV[j]
-                            ii += 1
+                    if d == 1:
+                        tI = <ar>k
+                        tV = <ar>v
+
+                        if tI.shape[0] != 1 and tV.shape[0] == 1:
+                            for 0 <= j < tI.shape[0]:
+                                I[ii] = tI[j]
+                                V1d[ii] = tV[0]
+                                ii += 1
+
+                        elif tI.shape[0] == tV.shape[0]:
+                            for 0 <= j < tI.shape[0]:
+                                I[ii] = tI[j]
+                                V1d[ii] = tV[j]
+                                ii += 1
+                        else:
+                            assert False
+
+                    elif d == 2:
+                        B = <ar>k
+                        tV = <ar>v
+
+                        if tV.shape[0] == 1:
+                            for 0 <= j < B[0,1] - B[0,0]:
+                                I[ii] = B[0,0] + j
+                                V1d[ii] = tV[0]
+                                ii += 1
+                        elif tV.shape[0] == (B[0,1] - B[0,0]):
+                            for 0 <= j < tV.shape[0]:
+                                I[ii] = B[0,0] + j
+                                V1d[ii] = tV[j]
+                                ii += 1
+                        else:
+                            assert False
+
                     else:
                         assert False
-
-                elif d == 2:
-                    B = <ar>k
-                    tV = <ar>v
-                    
-                    if tV.shape[0] == 1:
-                        for 0 <= j < B[0,1] - B[0,0]:
-                            I[ii] = B[0,0] + j
-                            V[ii] = tV[0]
-                            ii += 1
-                    elif tV.shape[0] == (B[0,1] - B[0,0]):
-                        for 0 <= j < tV.shape[0]:
-                            I[ii] = B[0,0] + j
-                            V[ii] = tV[j]
-                            ii += 1
-                    else:
-                        assert False
-
                 else:
                     assert False
-            else:
-                assert False
-            
-        assert ii == I.shape[0], "ii=%d, I.shape[0]=%d" % (ii, I.shape[0])
+                    
+            assert ii == I.shape[0], "ii=%d, I.shape[0]=%d" % (ii, I.shape[0])
 
+            return (I, V1d)
+
+        else:
+
+            # Now it's the 2d case; have a lot to do
+            V2d = empty( (n_rows, idx_count), npfloat)
+
+            for idx, (k, v) in enumerate(zip(key_buf, val_buf)):
+                
+                if isnumeric(k):
+                    I[ii] = <size_t>k
+                    V2d[:, ii] = <double>v
+                    ii += 1
+
+                elif type(k) is ndarray:
+
+                    # Get the indices
+                    d = (<ar>k).ndim
+
+                    if d == 1:
+                        tI = <ar>k
+                        I[ii:ii+tI.shape[0]] = tI[:]
+                        col_start = ii
+                        col_end = ii + tI.shape[0]
+
+                        ii += tI.shape[0]
+                    elif d == 2:
+                        B = <ar>k
+                        col_start = ii
+                        col_end = ii + B[0,1] - B[0,0]
+                        
+                        for col_start <= j < col_end:
+                            I[ii] = j
+                            ii += 1
+                    else:
+                        assert False
+
+                    # extract the values
+                    arV = <ar>v
+
+                    if arV.ndim == 1 or (arV.ndim == 2 and arV.shape[0] == 1):
+
+                        if arV.ndim == 1:
+                            tV = arV
+                        else:
+                            tV = arV[0,:]
+
+                        if col_end - col_start != 1 and tV.shape[0] == 1:
+                            V2d[:, col_start:col_end] = tV[0]
+
+                        elif col_end - col_start == tV.shape[0]:
+                            V2d[:, col_start:col_end] = tV
+
+                        else:
+                            assert False
+
+                    elif arV.ndim == 2:
+
+                        if arV.shape[0] != n_rows:
+                            raise IndexError("Inconsistent number of rows in set of 2d constraints "
+                                             "(index = %d, expected = %d, received = %d"
+                                             % (idx, n_rows, arV.shape[0]))
+                                
+                        V2d[:,col_start:col_end] = arV[:,:]
+
+                    else:
+                        assert False
+                    
+                else:
+                    assert False
+                    
+            assert ii == I.shape[0], "ii=%d, I.shape[0]=%d" % (ii, I.shape[0])
+
+            return (I, V2d)
 
 
     ############################################################
@@ -2264,8 +2351,6 @@ cdef class LP(object):
         
         self.setupLP(option_dict)
 
-        #self.print_lp()
-
         cdef int ret = solve(self.lp)
         
         ########################################
@@ -2495,7 +2580,14 @@ cdef class LP(object):
 
         return basis
 
-    cpdef print_lp(self):
+    cpdef printLP(self):
+        """
+        Prints the current LP.
+        
+        Sets up the LP at the current stage and with the default
+        options, if it is not already set up, and calls lpsolve's
+        `print_lp()` method.
+        """
 
         self.setupLP(self.getOptionDict())
         print_lp(self.lp)

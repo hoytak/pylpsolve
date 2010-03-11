@@ -91,8 +91,8 @@ above::
     print lp.getSolution()
 
 Numerous other ways of working with constraints and named blocks of
-variables are possible.  For more examples and information, see the
-`api`_.
+variables are possible.  For more examples and information, see the 
+:ref:`api`.
 
 
 Contents
