@@ -43,7 +43,7 @@ Variables
 Objective
 ----------------------------------------
 
-.. automethod:: pylpsolve.LP.setObjective(self, coefficients, mode = None)
+.. automethod:: pylpsolve.LP.setObjective(self, coefficients = None, mode = None)
 
 .. automethod:: pylpsolve.LP.addToObjective(self, coefficients)
 
@@ -77,3 +77,5 @@ Solving and Solution Values
 .. automethod:: pylpsolve.LP.getObjectiveValue(self)
 
 .. automethod:: pylpsolve.LP.getBasis(self, include_dual_basis = True)
+
+.. include:: references.rst

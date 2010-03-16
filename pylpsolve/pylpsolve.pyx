@@ -1,3 +1,23 @@
+# PyLPSolve
+
+# PyLPSolve is an object oriented wrapper for the open source LP
+# solver lp_solve. Copyright (C) 2010 Hoyt Koepke.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; either version 2.1 of
+# the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+
+
 from numpy cimport ndarray as ar, \
     int_t, uint_t, int32_t, uint32_t, int64_t, uint64_t, float_t
 
@@ -1049,8 +1069,8 @@ cdef class LP(object):
         Coefficients can be 1d arrays, 2d arrays, or single scalars.
         1d arrays can be given either as python lists or as numpy
         arrays.  2d arrays can be given as nested lists, a list of 1d
-        arrays, a 2d numpy array or matrix, or as a 2d scipy sparse
-        array.  Scalars can be used to specify a single variable.
+        arrays, or as a 2d numpy array or matrix.  Scalars can be used
+        to specify a single variable.
 
         If there is any inconsistency with array sizes or shape or a
         mismatch between expected number of variables and what is
@@ -1191,9 +1211,33 @@ cdef class LP(object):
         
           lp.addConstraint( ([0, 1, 2], [[1, 0, 1], [0,  0.5,  1]]), "<=", [1,2])
 
-        *Specifying a 2d constraint involving multiple blocks*::
+        *Specifying a 2d constraint involving multiple blocks.*
+        
+        Suppose :math:`\m A \in \mathcal{M}_{n\times k}`, :math:`\m B
+        \in\mathcal{M}_{n\times\ell}` and :math:`\m C
+        \in\mathcal{M}_{n\times m}` are all 2d matrices specified as
+        `numpy`_ arrays, and let :math:`\m x_a`, :math:`\m x_b` and
+        :math:`\m x_c` Then, we can specify the following constraints:
 
-          lp.addConstraint( [ (
+         .. math:: \begin{array}{cccccll} 
+                \m A  \m x_a  &+& \m B \m x_b  & &               &\preceq & \m b \\ 
+                              & & \m B \m x_b  &+& \m C \m x_c   &\preceq & \m 1 \\ 
+                \m 1^T \m x_a &+& \m 1^T\m x_b & & \m 1^T \m x_c &\leq    & 1 
+                      \end{array}
+
+        using the following code::
+
+          lp.addConstraint( {"A" : A, "B" : B}, "<=", b)
+          lp.addConstraint( {"B" : B, "C" : C}, "<=", 1)
+          lp.addConstraint( {"A" : 1, "B" : 1, "C" : 1}, "<=", 1)
+          
+        Note that the index blocks are created implicitly based on the
+        matrix sizes.  Each of the dictionaries above can also be
+        replaced with a list of tuples, i.e.::
+        
+          lp.addConstraint( [("A", A), ("B", B)], "<=", b)
+          lp.addConstraint( [("B", B), ("C", C)], "<=", 1)
+          lp.addConstraint( [("A", 1), ("B", 1), ("C", 1)], "<=", 1)
 
         """
 
@@ -1537,17 +1581,32 @@ cdef class LP(object):
         self.setMinimize(True)
         self._obj_func_specified = False
 
-    def setObjective(self, coefficients, mode = None):
+    def setObjective(self, coefficients = None, mode = None):
         """
-        Sets coefficients of the objective function.  Takes
-        as arguments 
+        Sets coefficients of the objective function.  Takes as
+        arguments an optional `coefficients` parameter and an optional
+        mode parameter that specifies whether the solver should
+        maximize or minimize the objective.
+
+        `coefficients`, if given, may be any of the 1d forms described
+        by `addConstraint()`.  If the `coefficients` parameter is
+        given, the objective function is cleared (use
+        `addToObjective()` to specify the objective with multiple
+        calls).
+
+        If given, `mode` is a string paramter that can be either
+        'minimize' or 'maximize'.  If `mode` is not given, the mode is
+        not changed.  The default, if mode is never specified, is to
+        minimize the objective.
         """
 
         # clear the objective (as opposed to addToObjective)
-        self.clearObjective()
-        self._addToObjective(coefficients)
+        if coefficients is not None:
+            self.clearObjective()
+            self._addToObjective(coefficients)
 
-        self._setMode(mode)
+        if mode is not None:
+            self._setMode(mode)
 
 
     def addToObjective(self, coefficients):
@@ -1556,6 +1615,11 @@ cdef class LP(object):
         function first.  Thus this function can be called repeatedly
         to build up different parts of the objective.  Any previously
         specified values are overwritten elementwise.
+
+        As in `setObjective()`, `coefficients` may be any 1d
+        coefficient specification described in `addConstraint()`.  All
+        objective function coefficients present in `coefficients` get
+        overwritten in the objective function.
         """
 
         self._addToObjective(coefficients)

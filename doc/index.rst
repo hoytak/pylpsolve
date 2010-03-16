@@ -25,19 +25,20 @@ PyLPSolve Distinctives
 - A design emphasis on usability and reliability.
 
 - Many bookkeeping operations are automatically handled by abstracting
-  similar variables into blocks that can be handled as a unit. 
+  similar variables into blocks that can be handled as a unit with
+  arrays or matrices.
 
 - LP sizing is handled automatically; a buffering system ensures this
   is fast and usable.
 
 - Full integration with numpy arrays.
 
-- Written in `Cython`_ for speed; all low-level operations are done
-  effectively in compiled C code.
+- Written in `Cython`_ for speed; all low-level operations are done in
+  compiled and optimized C code.
 
 - Good coverage by test cases.
 
-- Licensed under the BSD open source license.
+- Licensed under the LGPL open source license (as is LPSolve_).
 
 Short Example
 ------------------------------
@@ -104,5 +105,10 @@ Contents
     api
     download
     license
+
+Authors
+========================================
+
+The PyLPSolve wrapper was written by `Hoyt Koepke`_.  
 
 .. include:: references.rst 

@@ -36,6 +36,11 @@ templates_path = ['.templates']
 # The suffix of source filenames.
 source_suffix = '.rst'
 
+pngmath_latex_preamble = r"""
+\usepackage{amsmath, amsfonts, amssymb, multirow}
+\newcommand{\m}[1]{\ensuremath{\boldsymbol{\mathbf{#1}}}}
+"""
+
 # The encoding of source files.
 #source_encoding = 'utf-8'
 
