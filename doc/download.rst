@@ -2,9 +2,10 @@ Download
 ========================================
 
 A source tarball is available from
-http://www.stat.washington.edu/~hoytak/code/download/pylpsolve-v1.0.tar.gz.
-On linux, this requires the lpsolve5.5 and colamd development
-libraries to be installed.  Installation can then be done with::
+http://github.com/downloads/hoytak/pylpsolve/pylpsolve-v1.0.tar.gz.
+Installing this package on linux this requires the lpsolve5.5 and
+colamd development libraries to be installed.  Installation can then
+be done with::
 
   python setup.py install 
 
@@ -18,12 +19,12 @@ cython_ installation, one can instead run::
 
   python setup.py install --cython
 
-If someone who is more familar with compiling lpsolve on multiple
+*If someone who is more familar with compiling lpsolve on multiple
 platforms would assist me in getting together a robust source package
 and setup script that "just works" on Windows, OS X, and linux, I'd be
 happy to put it in the python cheese shop.  This would allow
 installation through the easy_install utilities.  Until that happens,
-however, it will just be hosted on my website.
+however, it will just be hosted on my website.*
 
 
 Developers
