@@ -2234,7 +2234,7 @@ cdef class LP(object):
         cdef ar[double, mode="c"] guess_vect  = None
 
         # possibly set the start basis
-        if "basis" in option_dict:
+        if "basis" in option_dict and option_dict["basis"] is not None:
             if presolve != 0:
                 warnings.warn("Presolve must not be active when combined with setting basis; ignoring presolve.")
                 presolve = 0
@@ -2257,7 +2257,7 @@ cdef class LP(object):
             else:
                 start_basis = b.ravel()
 
-        elif "guess" in option_dict:
+        elif "guess" in option_dict and option_dict["guess"] is not None:
             if presolve != 0:
                 warnings.warn("Presolve must not be active when combined with setting basis; ignoring presolve.")
                 presolve = 0
