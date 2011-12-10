@@ -466,3 +466,4 @@ The LGPLv2 license::
                        END OF TERMS AND CONDITIONS
     
   
+.. include:: references.rst

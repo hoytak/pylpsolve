@@ -72,9 +72,8 @@ which would print the solution::
    
    [3, 0, 2]
 
-This is the simplest possible way to work with constraints; numerous
-other ways are possible.  For example, this code is equivalent to the
-above::
+This is the simplest way to work with constraints; numerous other ways
+are possible.  For example, this code is equivalent to the above::
 
     lp = LP()
     
@@ -109,6 +108,7 @@ Contents
 Authors
 ========================================
 
-The PyLPSolve wrapper was written by `Hoyt Koepke`_.  
+The PyLPSolve wrapper was written by `Hoyt Koepke`_, building on the
+work of the lpsolve_ team.  Contributions are welcome.
 
 .. include:: references.rst 

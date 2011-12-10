@@ -1141,7 +1141,7 @@ cdef class LP(object):
 
             lp.addConstraint([1,2,3], "in", [0,2])
             
-          or 
+          or::
 
             lp.addConstraint([1,2,3], ">=", 0)
             lp.addConstraint([1,2,3], "<=", 2)
@@ -1203,13 +1203,29 @@ cdef class LP(object):
 
         **Examples**
 
-        *Specifying specific indices with a 1d Array and range constraints*::
+        *Specifying specific indices with a 1d Array and range constraints*
+
+        To place a constraint on specific indices, one can use a tuple
+        of 2 arrays/lists.  For example, to specify
+        :math:`x_0 + 5x_3 + 10x_10 \in [-1,1]`,
+        one could use The following::
         
           lp.addConstraint( ([0, 3, 10], [1, 5, 10]), "in", [-1,1])
 
-        *Specifying specific indices with a 2d Array*::
+        *Specifying specific indices with a 2d Array*
+
+        Similarly, one can replace the 1d array of coefficients in the
+        previous example with a 2d array or nested list.  The
+        following::
         
-          lp.addConstraint( ([0, 1, 2], [[1, 0, 1], [0,  0.5,  1]]), "<=", [1,2])
+          lp.addConstraint( ([0, 1, 5], [[1, 0, 3], [0,  5,  1]]), "<=", [1,2])
+          
+        specifies:
+
+             .. math:: \begin{array}{r} 
+                         x_0  + 3x_5  \leq 1 \\ 
+                         5x_1 +  x_5  \leq 2
+                      \end{array}
 
         *Specifying a 2d constraint involving multiple blocks.*
         
@@ -1217,7 +1233,8 @@ cdef class LP(object):
         \in\mathcal{M}_{n\times\ell}` and :math:`\m C
         \in\mathcal{M}_{n\times m}` are all 2d matrices specified as
         `numpy`_ arrays, and let :math:`\m x_a`, :math:`\m x_b` and
-        :math:`\m x_c` Then, we can specify the following constraints:
+        :math:`\m x_c` be vectors of variables corresponding to these
+        blocks. Then, we can specify the following constraints:
 
          .. math:: \begin{array}{cccccll} 
                 \m A  \m x_a  &+& \m B \m x_b  & &               &\preceq & \m b \\ 
