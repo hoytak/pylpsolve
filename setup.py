@@ -70,20 +70,33 @@ numpy_needed = True
 
 source_directory_list = ['pylpsolve']
 
+lpsolve_base = 'pylpsolve/lp_solve_5.5'
+
 # Stuff for extension module stuff
-compiler_args = ['-O3']
+compiler_args = ['-O3', '-march=native', '-DYY_NEVER_INTERACTIVE','-DPARSER_LP', '-DINVERSE_ACTIVE=INVERSE_LUSOL', '-DRoleIsExternalInvEngine']
 link_args = ['-O3']
 
-extra_library_dirs = []
-extra_include_dirs = []
+from glob import glob
+from os.path import join
 
-library_includes = ['lpsolve55', 'colamd']
+extra_library_dirs = []
+extra_include_dirs = [join(lpsolve_base, d) for d in ['.', 'shared', 'bfp', 'bfp/bfp_LUSOL', 'bfp/bfp_LUSOL/LUSOL', 'colamd']]
+
+library_includes = ['colamd']
 specific_libraries = {}
+
+extra_sources = {'pylpsolve.pylpsolve' : [join(lpsolve_base, f) for f in 
+                                          ['lp_MDO.c', 'shared/commonlib.c', 'shared/mmio.c', 'shared/myblas.c', 
+                                           'ini.c', 'fortify.c', 'colamd/colamd.c', 'lp_rlp.c', 'lp_crash.c', 
+                                           'bfp/bfp_LUSOL/lp_LUSOL.c', 'bfp/bfp_LUSOL/LUSOL/lusol.c', 'lp_Hash.c', 
+                                           'lp_lib.c', 'lp_wlp.c', 'lp_matrix.c', 'lp_mipbb.c', 'lp_MPS.c', 'lp_params.c', 
+                                           'lp_presolve.c', 'lp_price.c', 'lp_pricePSE.c', 'lp_report.c', 'lp_scale.c', 
+                                           'lp_simplex.c', 'lp_SOS.c', 'lp_utils.c', 'yacc_read.c']]}
+
 
 ################################################################################
 # Shouldn't have to adjust anything below this line...
 
-from glob import glob
 import os
 from os.path import split, join
 from itertools import chain
@@ -184,6 +197,8 @@ if __name__ == '__main__':
     def get_extra_link_args(m):
         return link_args + (['-g'] if debug_mode_c_code else [])
 
+    def get_extra_source_files(m):
+        return extra_sources[m] if m in extra_sources else []
 
     ############################################################
     # Cython extension lists
@@ -198,7 +213,7 @@ if __name__ == '__main__':
             
             ext_modules.append(Extension(
                     modname,
-                    [f],
+                    [f] + get_extra_source_files(modname),
                     include_dirs = get_include_dirs(modname),
                     library_dirs = get_library_dirs(modname),
                     libraries = get_libraries(modname),
