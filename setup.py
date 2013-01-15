@@ -73,7 +73,7 @@ source_directory_list = ['pylpsolve']
 lpsolve_base = 'pylpsolve/lp_solve_5.5'
 
 # Stuff for extension module stuff
-compiler_args = ['-O3', '-march=native', '-DYY_NEVER_INTERACTIVE','-DPARSER_LP', '-DINVERSE_ACTIVE=INVERSE_LUSOL', '-DRoleIsExternalInvEngine']
+compiler_args = ['-O3', '-DYY_NEVER_INTERACTIVE','-DPARSER_LP', '-DINVERSE_ACTIVE=INVERSE_LUSOL', '-DRoleIsExternalInvEngine']
 link_args = ['-O3']
 
 from glob import glob
@@ -82,7 +82,7 @@ from os.path import join
 extra_library_dirs = []
 extra_include_dirs = [join(lpsolve_base, d) for d in ['.', 'shared', 'bfp', 'bfp/bfp_LUSOL', 'bfp/bfp_LUSOL/LUSOL', 'colamd']]
 
-library_includes = ['colamd']
+library_includes = []
 specific_libraries = {}
 
 extra_sources = {'pylpsolve.pylpsolve' : [join(lpsolve_base, f) for f in 
