@@ -40,6 +40,11 @@ Variables
 
 .. automethod:: pylpsolve.LP.setUpperBound(self, indices, ub)
 
+.. automethod:: pylpsolve.LP.setInteger(self, indices)
+
+.. automethod:: pylpsolve.LP.setBinary(self, indices)
+
+
 Objective
 ----------------------------------------
 

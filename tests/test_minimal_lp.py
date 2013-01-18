@@ -33,6 +33,23 @@ class TestBasic(unittest.TestCase):
         
         lp.addConstraint( (ar([0]), ar([1])) , ">", 1)
         lp.setObjective( [1], mode = "minimize")
+        lp.solve()
+
+        self.assert_(lp.getObjectiveValue() == 1)
+
+        v = lp.getSolution()
+
+        self.assert_(len(v) == 1)
+        self.assert_(v[0] == 1)
+
+    def test01_basic_int(self):
+        # test singleton
+        
+        lp = LP()
+        
+        lp.addConstraint( ([0], [1]) , "<", 1.5)
+        lp.setInteger( [0] )
+        lp.setObjective( ([0], [1]), mode = "maximize")
 
         lp.solve()
 
@@ -43,6 +60,23 @@ class TestBasic(unittest.TestCase):
         self.assert_(len(v) == 1)
         self.assert_(v[0] == 1)
 
+    def test01_basic_binary(self):
+        # test singleton
+        
+        lp = LP()
+        
+        lp.addConstraint( ([0], [1]) , ">", 0.5)
+        lp.setInteger( [0] )
+        lp.setObjective( ([0], [1]), mode = "minimize")
+
+        lp.solve()
+
+        # self.assert_(lp.getObjectiveValue() == 1.0)
+
+        v = lp.getSolution()
+
+        self.assert_(len(v) == 1)
+        self.assert_(v[0] == 1)
 
     def test01_basic_secondcol(self):
         # test singleton

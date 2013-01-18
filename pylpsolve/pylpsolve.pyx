@@ -207,6 +207,10 @@ cdef dict _constraint_type_rev_map = {
     constraint_geq    : ">=",
     constraint_in     : "in"}
 
+DEF type_real   = 0
+DEF type_binary = 1
+DEF type_integer = 2
+
 cdef inline str getReverseCType(int ctype):
     return _constraint_type_rev_map[ctype]
 
@@ -228,7 +232,7 @@ cdef inline getCType(str ctypestr):  # no return typing to allow exceptions
 ######################################################################
 # External imports
 
-cdef extern from "lpsolve/lp_lib.h":
+cdef extern from "lp_solve_5.5/lp_lib.h":
     ctypedef void lprec
 
     lprec* make_lp(int rows, int cols)
@@ -259,6 +263,8 @@ cdef extern from "lpsolve/lp_lib.h":
     real get_infinite(lprec*)
     ecode set_bounds(lprec*, int column, real lower, real upper)
     ecode set_unbounded(lprec *lp, int column)
+    ecode set_int(lprec *lp, int column, unsigned char must_be_int)
+    ecode set_binary(lprec *lp, int column, unsigned char must_be_bin)
 
     # Row bounds
     ecode set_rowex(lprec *lp, int row_no, int count, real *row, int *colno)
@@ -344,7 +350,10 @@ cdef class LP(object):
 
     cdef list _upper_bound_keys, _upper_bound_values
     cdef size_t _upper_bound_count
-    
+
+    cdef list _as_type_keys, _as_type_values
+    cdef size_t _as_type_count
+
     # The objective function
     cdef list _obj_func_keys
     cdef list _obj_func_values
@@ -393,6 +402,10 @@ cdef class LP(object):
         self._upper_bound_keys   = []
         self._upper_bound_values = []
         self._upper_bound_count  = 0
+
+        self._as_type_keys   = []
+        self._as_type_values = []
+        self._as_type_count  = 0
 
         self._obj_func_keys   = []
         self._obj_func_values = []
@@ -1021,7 +1034,8 @@ cdef class LP(object):
             #              "setting to lowest-indexed columns.")
             raise Exception("Non-indexed variable block present which does not span columns; "
                             "setting to lowest-indexed columns.")
-            self._user_warned_about_nonindexed_blocks = True
+        
+        # self._user_warned_about_nonindexed_blocks = True
             
 
 
@@ -1800,6 +1814,31 @@ cdef class LP(object):
         self._setBound(indices, ub, False)
         
 
+    cpdef setInteger(self, indices):
+        """
+        Sets the variable type to be integer only.
+
+        `indices` may be a single index, an array, list, or index
+        tuple, or the name of an index block.  If multiple indices are
+        specified, then `lb` may either be a scalar or a vector of the
+        same length as the number of indices.
+        """
+
+        self._setVarType(indices, type_integer)
+
+    cpdef setBinary(self, indices):
+        """
+        Sets the variable type to be binary only.
+
+        `indices` may be a single index, an array, list, or index
+        tuple, or the name of an index block.  If multiple indices are
+        specified, then `lb` may either be a scalar or a vector of the
+        same length as the number of indices.
+        """
+
+        self._setVarType(indices, type_binary)
+
+
     cdef _setBound(self, varidx, b, bint lower_bound):
         
         if b is None:
@@ -1818,7 +1857,12 @@ cdef class LP(object):
         else:
             self._stackOnInterpretedKeyValuePair(
                 self._upper_bound_keys, self._upper_bound_values, varidx, b, &self._upper_bound_count, True)
+
             
+    cdef _setVarType(self, varidx, int type):
+
+        self._stackOnInterpretedKeyValuePair(
+            self._as_type_keys, self._as_type_values, varidx, type, &self._as_type_count, True)
 
     cdef applyVariableBounds(self):
         
@@ -1856,7 +1900,20 @@ cdef class LP(object):
             else:
                 set_upbo(self.lp, I[i] + 1, V[i])
 
+        I, V = self._getIndexValueArraysFromIntepretedStack(
+            self._as_type_keys, self._as_type_values, self._as_type_count)
 
+        for 0 <= i < I.shape[0]:
+            if V[i] == type_binary:
+                set_binary(self.lp, I[i] + 1, True)
+            elif V[i] == type_integer:
+                set_int(self.lp, I[i] + 1, True)
+            elif V[i] == type_real:
+                set_int(self.lp, I[i] + 1, False)
+                set_binary(self.lp, I[i] + 1, False)
+            else:
+                assert False
+        
     ############################################################
     # Helper functions for turning dictionaries or tuple-lists into an
     # index array + value array.
