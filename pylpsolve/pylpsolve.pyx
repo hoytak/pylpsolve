@@ -2263,8 +2263,8 @@ cdef class LP(object):
         ####################
         # Verbosity
 
-        if option_dict["verbosity"] not in [1,2,3,4,5]:
-            raise ValueError("Verbosity level must be 1,2,3,4, or 5 (highest).")
+        if option_dict["verbosity"] not in [0,1,2,3,4,5,6]:
+            raise ValueError("Verbosity level must be 0,1,2,3,4,5 or 6 (highest).")
 
         # Options are vetted now; basis and others might not be 
 
