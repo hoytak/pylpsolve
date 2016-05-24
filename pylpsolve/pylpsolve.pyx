@@ -2551,6 +2551,7 @@ cdef class LP(object):
         elif ret == 13:
              # NOFEASFOUND (13)         No feasible B&B solution found
             raise LPException("Error 13: No feasible B&B solution found")
+        raise LPException("Error {}: Unknown error!".format(ret))
 
         # And we're done
 
